@@ -27,3 +27,13 @@ where school_id = '00000000-0000-0000-0000-000000000001'
 ```
 
 Pastikan hasil update tepat satu baris. Setelah admin pertama dapat masuk, semua persetujuan berikutnya dilakukan dari `/dashboard/users`. Jangan membuat endpoint publik untuk bootstrap role.
+
+## Master data akademik
+
+Route `/dashboard/master` hanya dapat dibaca oleh membership aktif dengan role `super_admin`, `kepala_sekolah`, `operator`, atau `guru`. Mutation hanya diterima untuk tiga role pertama melalui authenticated server client dan RLS. `school_id` selalu berasal dari membership aktif server-side; form tidak boleh menentukan tenant.
+
+RLS pada `academic_years`, `semesters`, dan `classrooms` membatasi query ke tenant aktif. Guru hanya memiliki akses baca. Operator dapat membuat dan mengubah data tetapi tidak menghapus. Super admin dan kepala sekolah dapat menghapus bila tidak ada dependensi yang belum ditangani.
+
+## Feedback
+
+Feedback berada di tenant aktif dan memakai authenticated Supabase client, bukan `SUPABASE_SECRET_KEY`. Saat insert, Server Action mengisi `user_id`, `school_id`, dan status `open`; nilai tersebut tidak dipercaya dari browser. Pengguna hanya dapat membaca feedback miliknya. Super admin dan kepala sekolah dapat membaca serta mengubah status feedback di sekolahnya; orang tua, guru, dan operator tidak mendapat akses daftar global.

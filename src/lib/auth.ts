@@ -52,3 +52,19 @@ export async function requireSchoolAdmin() {
   if (context.membership.role !== "super_admin" && context.membership.role !== "kepala_sekolah") redirect("/dashboard?error=forbidden");
   return context;
 }
+
+export async function requireMasterDataAccess() {
+  const context = await requireActiveMembership();
+  if (!["super_admin", "kepala_sekolah", "operator"].includes(context.membership.role ?? "")) {
+    redirect("/dashboard?error=forbidden");
+  }
+  return context;
+}
+
+export async function requireMasterDataViewer() {
+  const context = await requireActiveMembership();
+  if (!["super_admin", "kepala_sekolah", "operator", "guru"].includes(context.membership.role ?? "")) {
+    redirect("/dashboard?error=forbidden");
+  }
+  return context;
+}
