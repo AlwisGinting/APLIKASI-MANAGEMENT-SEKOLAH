@@ -1,3 +1,4 @@
+import { supabaseFetch } from "./fetch";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 
@@ -8,6 +9,7 @@ export async function createClient() {
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
     {
+      global: { fetch: supabaseFetch },
       cookies: {
         getAll() {
           return cookieStore.getAll();
@@ -16,7 +18,7 @@ export async function createClient() {
           try {
             cookiesToSet.forEach(({ name, value, options }) => cookieStore.set(name, value, options));
           } catch {
-            // Server Components cannot always mutate cookies; middleware refreshes the session.
+            // Server Components cannot always mutate cookies; proxy refreshes the session.
           }
         },
       },

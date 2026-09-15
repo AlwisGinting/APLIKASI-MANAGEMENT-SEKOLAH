@@ -1,18 +1,23 @@
 "use server";
 
+import { cookies } from "next/headers";
+import { RECOVERY_COOKIE } from "@/lib/recovery";
+import { USER_MESSAGES } from "@/lib/errors";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { APP_ROLES, MEMBERSHIP_STATUSES, requireSchoolAdmin } from "@/lib/auth";
+import { APP_ROLES, MEMBERSHIP_STATUSES, requireCapability } from "@/lib/auth";
 import { createClient } from "@/utils/supabase/server";
 
 export async function signOut() {
   const supabase = await createClient();
-  await supabase.auth.signOut();
+  const { error } = await supabase.auth.signOut();
+  if (error) throw new Error(USER_MESSAGES.SERVICE_UNAVAILABLE);
+  (await cookies()).delete(RECOVERY_COOKIE);
   redirect("/login");
 }
 
 export async function updateMembership(formData: FormData) {
-  const context = await requireSchoolAdmin();
+  const context = await requireCapability("users.manage");
   const membershipId = String(formData.get("membership_id") ?? "");
   const nextStatus = String(formData.get("status") ?? "");
   const roleValue = String(formData.get("role") ?? "");
@@ -38,18 +43,18 @@ export async function updateMembership(formData: FormData) {
       .eq("school_id", context.membership.school_id)
       .eq("status", "active")
       .eq("role", "super_admin");
-    if (countError || count === 1) redirect("/dashboard/users?error=last-super-admin");
+    if (countError || (count ?? 0) <= 1) redirect("/dashboard/users?error=last-super-admin");
   }
 
-  const { error } = await context.supabase.from("school_memberships").update({
+  const { data: saved, error } = await context.supabase.from("school_memberships").update({
     status: nextStatus,
     role,
     approved_by: nextStatus === "active" ? context.user.id : null,
     approved_at: nextStatus === "active" ? new Date().toISOString() : null,
     updated_at: new Date().toISOString(),
-  }).eq("id", membershipId).eq("school_id", context.membership.school_id);
+  }).eq("id", membershipId).eq("school_id", context.membership.school_id).select("id").maybeSingle();
 
-  if (error) redirect("/dashboard/users?error=update");
+  if (error || !saved) redirect("/dashboard/users?error=update");
   revalidatePath("/dashboard/users");
   redirect("/dashboard/users?success=updated");
 }

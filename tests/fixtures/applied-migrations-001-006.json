@@ -1,0 +1,8 @@
+{
+  "supabase/migrations/202609100001_foundation.sql": "4a74b15df555cc55573169c0f6e0b82e0b202e86ac853f50ce75b1a0d5704ea0",
+  "supabase/migrations/202609100002_auth_membership_security.sql": "859986aca6ec6407f347b4ab1e4f50faecfa7bfb9a89fadd88a1af9de86fa23e",
+  "supabase/migrations/202609110003_academic_master_data.sql": "38ab479d1b161a06d496c714307608336bdb9f9ca353119137ac935cc882dc3c",
+  "supabase/migrations/202609110004_semester_defaults.sql": "a4c77c38a2343638ef79c3fdf6103a591c98df58b0b870cf0e2c0b3abff4b65d",
+  "supabase/migrations/202609110005_feedback.sql": "4584feb97be56d2d633ea0316416f6c4e7c251d35353ea705f8ad2791b108f3c",
+  "supabase/migrations/202609150006_school_profile.sql": "0a08e5d6a735de927563161997435e7d973ce9093b7590e1014d3ab566a3b419"
+}

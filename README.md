@@ -20,12 +20,16 @@ Isi nilai Supabase di `.env.local`. File environment tidak boleh di-commit.
 
 Gunakan `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` untuk client/browser dan `SUPABASE_SECRET_KEY` hanya di server bila administrative access memang diperlukan.
 
+Local dan production harus memakai project Supabase yang sama untuk berbagi akun Auth. Checklist environment dan redirect tersedia di [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
 ## Pemeriksaan
 
 ```bash
 npm run lint
-npx tsc --noEmit
+npm run typecheck
 npm run build
+npm run check
+npm run test:foundation
 ```
 
 ## Git workflow
@@ -38,7 +42,7 @@ npm run build
 
 ## Database
 
-Jalankan migration `supabase/migrations/202609100001_foundation.sql` dan `supabase/migrations/202609100002_auth_membership_security.sql` melalui Supabase CLI atau SQL Editor, kemudian `supabase/seed.sql` bila diperlukan. Backup database mengikuti prosedur terpisah, bukan disimpan di GitHub. Lihat [docs/DATABASE.md](docs/DATABASE.md).
+Migration 001–004 sudah diterapkan dan immutable. Migration 005 feedback dan 006 profil sekolah belum diterapkan; jangan menjalankan migration atau seed otomatis pada project existing. Backup mengikuti prosedur terpisah dari GitHub. Lihat [docs/DATABASE.md](docs/DATABASE.md).
 
 ## Dokumentasi
 
@@ -47,3 +51,5 @@ Jalankan migration `supabase/migrations/202609100001_foundation.sql` dan `supaba
 - [Security](docs/SECURITY.md)
 - [Deployment](docs/DEPLOYMENT.md)
 - [Roadmap](docs/ROADMAP.md)
+- [Production readiness dan hasil audit](docs/PRODUCTION.md)
+- [Backup](docs/BACKUP.md)

@@ -31,3 +31,58 @@ button,
 a {
   -webkit-tap-highlight-color: transparent;
 }
+
+/* Dashboard preferences are server-rendered attributes; system theme is CSS-only. */
+.dashboard-shell {
+  --shell-bg: #f6f8f5;
+  --shell-surface: #ffffff;
+  --shell-text: #18312c;
+  --shell-muted: #526b61;
+  --shell-line: #cbdcd3;
+  --shell-notice: #edf6f0;
+  background: var(--shell-bg);
+  color: var(--shell-text);
+  color-scheme: light;
+}
+.dashboard-shell[data-theme="dark"] {
+  --shell-bg: #101c18;
+  --shell-surface: #1a2b24;
+  --shell-text: #e4f0e9;
+  --shell-muted: #b2c8bd;
+  --shell-line: #496454;
+  --shell-notice: #263c31;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  .dashboard-shell[data-theme="system"] {
+    --shell-bg: #101c18;
+    --shell-surface: #1a2b24;
+    --shell-text: #e4f0e9;
+    --shell-muted: #b2c8bd;
+    --shell-line: #496454;
+    --shell-notice: #263c31;
+    color-scheme: dark;
+  }
+}
+.dashboard-shell .surface { background: var(--shell-surface); }
+.dashboard-shell .muted { color: var(--shell-muted); }
+.dashboard-shell :where(.border, .border-b, .border-r, .border-l-2, .divide-y > *) { border-color: var(--shell-line); }
+.dashboard-shell .notice { background: var(--shell-notice); }
+.dashboard-shell .nav-link:hover { background: var(--shell-notice); }
+.dashboard-shell :where(a, button, input, select, textarea, summary):focus-visible { outline: 3px solid #80baa0; outline-offset: 3px; }
+.dashboard-shell .workspace-page { width: 100%; max-width: 76rem; padding: 2rem 1rem; margin-inline: auto; }
+.dashboard-shell .field { display: block; min-height: 3rem; width: 100%; border: 1px solid var(--shell-line); border-radius: .75rem; background: var(--shell-surface); color: var(--shell-text); padding: .75rem 1rem; font-size: 1rem; }
+.dashboard-shell .field.pr-24 { padding-right: 6rem; }
+.dashboard-shell .primary-button { min-height: 3rem; padding: .75rem 1.25rem; border-radius: .75rem; background: #20584c; color: #fff; font-size: .875rem; font-weight: 600; }
+.dashboard-shell :disabled { cursor: wait; opacity: .65; }
+.dashboard-shell[data-compact="true"] .workspace-page { padding-block: 1.25rem; }
+.dashboard-shell[data-compact="true"] section.surface { padding: 1rem; }
+@media (min-width: 640px) { .dashboard-shell .workspace-page { padding-inline: 2rem; } }
+/* Existing master-data/feedback pages retain their UI while sharing shell colors. */
+.dashboard-shell [class~="bg-[#f6f8f5]"] { background: var(--shell-bg); }
+.dashboard-shell :is([class~="bg-white"], [class~="bg-white/75"]) { background: var(--shell-surface); }
+.dashboard-shell [class~="text-[#18312c]"] { color: var(--shell-text); }
+.dashboard-shell :is([class~="text-[#60736e]"], [class~="text-[#405c55]"]) { color: var(--shell-muted); }
+.dashboard-shell :is([class~="border-[#dce7e1]"], [class~="border-[#cbdcd3]"], [class~="border-[#e6eee9]"]) { border-color: var(--shell-line); }
+.dashboard-shell :is([class~="text-[#20584c]"], [class~="text-[#2f7162]"]) { color: var(--shell-text); }
+.dashboard-shell :is([class~="bg-[#edf6f0]"], [class~="bg-[#fff1ed]"]) { background: var(--shell-notice); color: var(--shell-text); }

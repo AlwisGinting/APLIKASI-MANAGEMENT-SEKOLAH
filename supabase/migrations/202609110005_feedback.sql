@@ -1,6 +1,8 @@
 -- Global feedback for authenticated school members.
 -- Apply after 202609110004_semester_defaults.sql.
 
+begin;
+
 create table if not exists public.feedbacks (
   id uuid primary key default gen_random_uuid(),
   school_id uuid not null references public.schools(id) on delete cascade,
@@ -42,6 +44,12 @@ language plpgsql
 set search_path = public
 as $$
 begin
+  if TG_OP = 'INSERT' then
+    new.status := 'open';
+    new.created_at := now();
+    new.updated_at := now();
+    return new;
+  end if;
   if new.id is distinct from old.id
     or new.school_id is distinct from old.school_id
     or new.user_id is distinct from old.user_id
@@ -59,7 +67,7 @@ $$;
 
 drop trigger if exists feedback_content_guard on public.feedbacks;
 create trigger feedback_content_guard
-before update on public.feedbacks
+before insert or update on public.feedbacks
 for each row execute function public.protect_feedback_content();
 
 revoke all on function public.protect_feedback_content() from public;
@@ -104,3 +112,5 @@ revoke all on public.feedbacks from anon;
 grant select, insert on public.feedbacks to authenticated;
 grant update on public.feedbacks to authenticated;
 grant delete on public.feedbacks to authenticated;
+
+commit;

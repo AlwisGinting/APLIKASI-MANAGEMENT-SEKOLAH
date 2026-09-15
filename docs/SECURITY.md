@@ -37,3 +37,70 @@ RLS pada `academic_years`, `semesters`, dan `classrooms` membatasi query ke tena
 ## Feedback
 
 Feedback berada di tenant aktif dan memakai authenticated Supabase client, bukan `SUPABASE_SECRET_KEY`. Saat insert, Server Action mengisi `user_id`, `school_id`, dan status `open`; nilai tersebut tidak dipercaya dari browser. Pengguna hanya dapat membaca feedback miliknya. Super admin dan kepala sekolah dapat membaca serta mengubah status feedback di sekolahnya; orang tua, guru, dan operator tidak mendapat akses daftar global.
+
+## Local dan production Auth
+
+Local dan production harus menunjuk ke project Supabase yang sama bila akun Auth ingin berlaku di keduanya. Perbedaan origin hanya memisahkan cookie session; password dan user Auth tidak disalin ke database lain. Jika project URL berbeda, itu adalah configuration mismatch, bukan masalah password lokal.
+
+Tidak ada custom cookie domain atau shared-cookie configuration pada Supabase SSR client. Browser menyimpan session local dan production secara terpisah, sebagaimana mestinya. Jangan mencoba membagikan cookie antar-origin.
+
+## Hardening yang diterapkan
+
+- Safe internal redirect menolak absolute URL, protocol-relative URL, backslash, whitespace/control character, dan encoded separator. Callback tidak mempercayai `next` sebagai bukti recovery.
+- Callback mengenali event `PASSWORD_RECOVERY` dari SDK saat kode berhasil ditukar. Kode hilang/tidak valid/kedaluwarsa menjadi error generik; token tidak diteruskan ke URL tujuan.
+- Password minimum 8 karakter dan confirmation divalidasi ulang server-side. Sesudah update sukses, marker recovery dan cookie session browser ini dibersihkan sebelum kembali ke login.
+- Error boundary global route dan dashboard tidak merender raw error/stack; kegagalan query tidak dianggap sebagai daftar kosong. Logger aplikasi hanya mencatat kategori.
+- Header `nosniff`, referrer policy, permissions policy, dan SAMEORIGIN dipertahankan dari working tree existing. Callback memakai `no-referrer`; response session/private `no-store`.
+- Secret client tetap `server-only`, hanya digunakan untuk lookup email Auth setelah pemeriksaan admin tenant. Tidak ada secret dalam Client Component.
+
+## Temuan kebijakan yang dipertahankan
+
+RLS membership 002 mengizinkan kepala sekolah dan super admin mengelola role, termasuk super admin, dalam tenant mereka. Larangan edit diri sendiri dan menurunkan super admin terakhir saat ini hanya pada Server Action; request database langsung dapat melewati guard aplikasi itu. Perlindungan super admin terakhir juga belum atomik terhadap perubahan bersamaan. Jangan menganggap guard UI sebagai enforcement database. Pengetatan memerlukan keputusan role/lifecycle dan migration lanjutan dengan uji konkurensi; tidak diubah diam-diam pada migration historical.
+
+Policy Storage 002 memberi semua membership aktif akses baca/tulis/hapus object di folder tenant, tanpa pembatasan role/bucket/pemilik yang lebih rinci. Ini mempertahankan isolation antar sekolah, tetapi belum menjadi kebijakan akses dokumen sensitif per pengguna. Jangan mengunggah dokumen sensitif sebelum kebijakan tersebut ditetapkan dan diperketat melalui migration baru.
+
+Policy insert membership memperbolehkan pengguna mengajukan membership pending tanpa role ke school_id lain; tidak otomatis memberi akses aktif. `schools.is_active` saat ini tidak diperiksa oleh helper akses existing setelah membership terbentuk. Semantik penonaktifan sekolah belum ditetapkan; perilaku dipertahankan.
+
+## Account dan app shell
+
+Profil pribadi memakai authenticated SSR client, update hanya full_name/phone/updated_at pada id dari user server. Form tidak dapat menetapkan role, membership, school_id, atau email. School edit menjalankan requireSchoolAdmin, memfilter sekolah dari membership aktif, dan hanya mengirim kolom allowlist. Izin RLS/grants 006 wajib diterapkan manual sebelum edit sekolah aktif.
+
+Upload avatar/logo belum diaktifkan: policy Storage 002 masih memberi anggota aktif akses luas terhadap object satu tenant, belum membatasi pemilik/bucket untuk foto pribadi. Gunakan inisial sampai policy upload/read/update/delete yang owner- dan bucket-scoped, validasi MIME serta ukuran maksimum 2 MB, dan jalur tenant/user direview.
+
+Security settings memakai updateUser dengan password/current_password dan signOut scope local/global dari session user; tidak memakai admin client. Enforcement current-password/reauthentication mengikuti konfigurasi Supabase Auth dan wajib diuji manual; jangan menganggap isian form sebagai policy Auth. Global logout memutus refresh session, tetapi access yang sudah diterbitkan bisa tetap berlaku sampai kedaluwarsa. UI menjelaskan batas ini tanpa mengekspos token.
+
+Feedback current_path disaring menjadi internal pathname saja (query/fragment dibuang). Mutation status memeriksa row yang benar-benar diperbarui agar id lintas tenant/tidak ditemukan tidak menghasilkan success palsu. Privacy/terms hanya draf, bukan kebijakan hukum final.
+
+## Capability dan isolasi tenant — Tahap A
+
+Semua capability mensyaratkan membership active dan role dikenal. Role/cookie browser tidak menentukan otorisasi. `requireCapability()` fail closed dengan redirect generik. RLS 002–006 tetap security boundary utama; capability tidak menggantikan RLS.
+
+| Capability | Super admin | Kepala sekolah | Operator | Guru | Orang tua |
+|---|---|---|---|---|---|
+| dashboard.read, profile.read/update_self, school.read | Ya | Ya | Ya | Ya | Ya |
+| feedback.create/read_own, activity.read, notifications.read | Ya | Ya | Ya | Ya | Ya |
+| school.update, users.read/manage, feedback.manage | Ya | Ya | Tidak | Tidak | Tidak |
+| academic.read | Ya | Ya | Ya | Ya | Tidak |
+| academic.manage | Ya | Ya | Ya | Tidak | Tidak |
+| academic.delete | Ya | Ya | Tidak | Tidak | Tidak |
+| academic.custom_semester_name, feedback.delete | Ya | Tidak | Tidak | Tidak | Tidak |
+
+`school.read` mencakup informasi sekolah dalam tenant yang memang bisa dibaca semua member melalui RLS; halaman settings sekolah kini juga read-only bagi guru/orang tua. Capability delete feedback belum menambah UI/action bisnis baru.
+
+School/profile/feedback insert memakai ID context, bukan form. Edit master memverifikasi ID record dan academic year pada tenant aktif; update/delete memakai filter ID + school_id dan memeriksa baris hasil. Semester aktif dibatasi school_id + academic_year_id. Feedback management memakai filter tenant dan menolak hasil nol baris. Membership administration memverifikasi target tenant, melarang edit diri sendiri, memvalidasi role/status terhadap allowlist, dan mempertahankan guard admin terakhir. Role/status pada form ini adalah nilai perubahan yang diotorisasi, bukan identitas privilege caller. Guard admin terakhir application-layer existing bukan jaminan terhadap race concurrent; invariant atomik database membutuhkan review terpisah.
+
+Pending/rejected/suspended tidak memberikan tenant access. Membership dicari ulang setiap request; cookie stale hanya dapat fallback ke membership aktif milik user yang masih valid. React cache tidak bertahan lintas request. RLS mengecek kembali saat query/mutation bila membership berubah selama request.
+
+Pengujian lokal memakai static/mock dan model cache request, bukan bukti database/browser production. Struktur RLS nyata dan kebutuhan fixture terisolasi ada di `tests/integration/README.md` untuk tahap E.
+
+## Tahap B — audit security (draft 007)
+
+Capability baru `audit.read` hanya active super_admin/kepala_sekolah. `activity.read` tetap semua role untuk ringkasan sendiri. Helper audit memeriksa capability secara mandiri, filter school_id dari active tenant dan RLS DB memakai has_school_role tenant. Operator/guru/orang_tua tidak memperoleh audit administratif. Tidak ada client writer, API insert bebas, atau service secret untuk query Activity.
+
+Append-only berlapis: revoke seluruh privilege public/anon/authenticated/service_role lalu SELECT authenticated saja; RLS SELECT admins tanpa policy write; trigger menolak UPDATE/DELETE/TRUNCATE. INSERT hanya melalui function trigger SECURITY DEFINER milik role migration trusted. Function EXECUTE dicabut, search_path fixed pg_catalog, tabel/operasi dibatasi dan tenant/actor berasal row/auth.uid. Audit stamp selalu mengisi waktu dan actor database. Tidak memakai FORCE RLS karena writer owner perlu menulis; owner/superuser masih dapat mengubah DDL/menonaktifkan trigger. Ini bukan tamper-proof terhadap administrator database. Batasi akses DDL/schema creation dan credential owner di luar aplikasi.
+
+Metadata hanya `changed_fields`, `old_status`, `new_status`, `old_role`, `new_role`. Nilai profil, phone/email, isi feedback, dokumen, raw session/auth payload/error stack/password/token/cookie/key tidak disimpan. Perbandingan OLD/NEW JSON bersifat transient dalam function; insert hanya metadata hasil allowlist. Formatter juga menolak unknown key/field/action/enum agar nilai tidak dikenal tidak dipantulkan mentah ke UI. Nama actor dibaca dari profile saat render jika RLS mengizinkan; audit menyimpan UUID saja.
+
+Retensi: belum ada purge otomatis/UI delete/export integration. Tetapkan periode retensi, siapa pemilik keputusan, akses backup, dan prosedur penghapusan terkontrol sebelum volume produksi tumbuh. FK sekolah RESTRICT mencegah penghapusan histori via cascade; archival sekolah/entity tidak menghapus audit. Penghapusan historis, legal hold, atau anonimisasi harus melalui prosedur privileged yang direview, karena append-only sengaja menolak UPDATE/DELETE biasa. Jangan menambahkan data sensitif sebagai solusi pelacakan.
+
+Validasi tahap B adalah static/unit/mock, belum menjalankan SQL/007 atau membuktikan RLS nyata. Review di database disposable harus mencakup rollback saat audit insert gagal, owner/privilege function, direct INSERT/UPDATE/DELETE/TRUNCATE, isolasi dua tenant/lima role, nested defaults/activation, actor NULL/system, profil multi-school/tanpa membership aktif, dan source deletion dengan audit bertahan. Tidak ada claim production audit sudah aktif.

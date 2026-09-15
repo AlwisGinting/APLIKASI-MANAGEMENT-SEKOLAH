@@ -7,7 +7,11 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "check": "npm run lint && npm run typecheck && npm run build",
+    "test": "npm run test:foundation",
+    "test:foundation": "node --test tests/foundation.test.mjs",
+    "test:auth-http": "node tests/auth-post-smoke.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",

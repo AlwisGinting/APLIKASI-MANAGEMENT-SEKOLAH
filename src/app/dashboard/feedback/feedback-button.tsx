@@ -1,23 +1,34 @@
 "use client";
-
 import { usePathname } from "next/navigation";
-import { useActionState, useState } from "react";
-import { useFormStatus } from "react-dom";
+import { useActionState, useEffect, useRef, useState } from "react";
+import { APP_CONFIG } from "@/config/app";
 import { submitFeedback } from "./actions";
-
 const initialState = { success: false, error: "" };
-
-function SubmitButton() {
-  const { pending } = useFormStatus();
-  return <button type="submit" disabled={pending} className="w-full rounded-xl bg-[#20584c] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#2f7162] disabled:cursor-wait disabled:opacity-60">{pending ? "Mengirim..." : "Kirim feedback"}</button>;
-}
-
 export function FeedbackButton() {
-  const [open, setOpen] = useState(false);
   const pathname = usePathname();
-  const [state, formAction] = useActionState(submitFeedback, initialState);
+  const dialog = useRef<HTMLDialogElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const [revision, setRevision] = useState(0);
   return <>
-    <button type="button" onClick={() => setOpen(true)} className="fixed bottom-5 right-5 z-40 flex items-center gap-2 rounded-full bg-[#20584c] px-4 py-3 text-sm font-semibold text-white shadow-[0_10px_30px_rgba(32,88,76,.22)] transition hover:bg-[#2f7162] focus:outline-none focus:ring-4 focus:ring-[#c8e2d7] sm:bottom-7 sm:right-7"><span aria-hidden="true">✎</span> Feedback</button>
-    {open && <div className="fixed inset-0 z-50 flex items-end justify-center bg-[#18312c]/30 p-4 sm:items-center" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setOpen(false); }}><section role="dialog" aria-modal="true" aria-labelledby="feedback-title" className="w-full max-w-lg rounded-[1.5rem] bg-white p-6 shadow-2xl sm:p-8"><div className="flex items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#e98a6a]">Ruang dengar</p><h2 id="feedback-title" className="mt-2 text-2xl font-semibold text-[#18312c]">Kirim feedback</h2></div><button type="button" onClick={() => setOpen(false)} aria-label="Tutup feedback" className="text-2xl leading-none text-[#60736e]">×</button></div>{state.success ? <div className="mt-6 rounded-xl bg-[#edf6f0] p-5 text-sm leading-6 text-[#20584c]" role="status"><p className="font-semibold">Feedback berhasil dikirim.</p><p className="mt-1">Terima kasih, masukan Anda akan ditinjau oleh tim sekolah.</p><button type="button" onClick={() => setOpen(false)} className="mt-4 rounded-lg border border-[#9bc9b5] px-4 py-2 font-semibold">Tutup</button></div> : <form action={formAction} className="mt-6 space-y-4"><input type="hidden" name="current_path" value={pathname} /><label className="block text-sm font-medium text-[#18312c]">Jenis<select name="type" defaultValue="suggestion" className="mt-2 w-full rounded-xl border border-[#cbdcd3] px-4 py-3"><option value="suggestion">Saran</option><option value="bug">Bug / Error</option><option value="complaint">Keluhan</option><option value="other">Lainnya</option></select></label><label className="block text-sm font-medium text-[#18312c]">Judul<input name="title" required maxLength={200} className="mt-2 w-full rounded-xl border border-[#cbdcd3] px-4 py-3" /></label><label className="block text-sm font-medium text-[#18312c]">Pesan<textarea name="message" required maxLength={5000} rows={5} className="mt-2 w-full rounded-xl border border-[#cbdcd3] px-4 py-3" /></label>{state.error && <p className="rounded-xl bg-[#fff1ed] px-4 py-3 text-sm text-[#b85e43]" role="alert">{state.error}</p>}<SubmitButton /></form>}</section></div>}
+    <button ref={trigger} type="button" onClick={() => { setRevision((value) => value + 1); dialog.current?.showModal(); }} className="fixed bottom-4 right-4 z-40 rounded-full bg-[#20584c] px-4 py-3 text-sm font-semibold text-white shadow-lg sm:bottom-6 sm:right-6">✎ Feedback</button>
+    <dialog ref={dialog} aria-labelledby="feedback-title" onClose={() => trigger.current?.focus()} className="surface fixed inset-0 m-auto max-h-[85dvh] w-[calc(100%_-_2rem)] max-w-lg overflow-y-auto rounded-2xl border p-6 text-inherit shadow-2xl backdrop:bg-black/40 sm:p-8">
+      <div className="mb-5 flex items-center justify-between gap-3"><h2 id="feedback-title" className="text-2xl font-semibold">Kirim feedback</h2><button type="button" aria-label="Tutup feedback" onClick={() => dialog.current?.close()} className="min-h-11 min-w-11 rounded-lg text-2xl">×</button></div>
+      <FeedbackForm key={revision} path={pathname} close={() => dialog.current?.close()} />
+    </dialog>
   </>;
+}
+function FeedbackForm({ path, close }: { path: string; close: () => void }) {
+  const [state, action, pending] = useActionState(submitFeedback, initialState);
+  const lock = useRef(false);
+  useEffect(() => { lock.current = false; }, [state]);
+  return state.success ? <div role="status" aria-live="polite"><p>Feedback berhasil dikirim. Terima kasih atas masukan Anda.</p><button type="button" className="primary-button mt-5" onClick={close}>Tutup</button></div> : <form action={action} onSubmit={(event) => { if (lock.current || pending) event.preventDefault(); else lock.current = true; }} className="space-y-4" aria-busy={pending}>
+    <input type="hidden" name="current_path" value={path} />
+    <fieldset disabled={pending} className="space-y-4"><legend className="sr-only">Isi feedback</legend>
+      <label className="block text-sm font-medium">Jenis<select name="type" defaultValue="suggestion" className="field mt-2"><option value="suggestion">Saran</option><option value="bug">Bug / Error</option><option value="complaint">Keluhan</option><option value="other">Lainnya</option></select></label>
+      <label className="block text-sm font-medium">Judul<input name="title" required maxLength={APP_CONFIG.feedback.titleMaxLength} className="field mt-2" /></label>
+      <label className="block text-sm font-medium">Pesan<textarea name="message" required maxLength={APP_CONFIG.feedback.messageMaxLength} rows={5} className="field mt-2" /></label>
+      <div aria-live="polite">{state.error && <p role="alert" className="notice rounded-xl border p-3 text-sm">{state.error}</p>}</div>
+      <button type="submit" disabled={pending} className="primary-button w-full">{pending ? "Mengirim..." : "Kirim feedback"}</button>
+    </fieldset>
+  </form>;
 }

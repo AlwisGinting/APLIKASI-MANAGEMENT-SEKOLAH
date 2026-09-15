@@ -1,5 +1,5 @@
-import Link from "next/link";
-import { requireSchoolAdmin, APP_ROLES, SCHOOL_NAME } from "@/lib/auth";
+import { USER_MESSAGES } from "@/lib/errors";
+import { requireCapability, APP_ROLES } from "@/lib/auth";
 import { updateMembership } from "@/app/auth/actions";
 import { getAuthEmails } from "@/utils/supabase/admin";
 
@@ -17,17 +17,19 @@ const errorMessages: Record<string, string> = {
 };
 
 export default async function UsersPage({ searchParams }: Props) {
-  const context = await requireSchoolAdmin();
+  const context = await requireCapability("users.read");
   const params = await searchParams;
-  const { data: memberships } = await context.supabase
+  const { data: memberships, error: membershipsError } = await context.supabase
     .from("school_memberships")
     .select("id, user_id, role, status, created_at")
     .eq("school_id", context.membership.school_id)
     .order("created_at", { ascending: false });
+  if (membershipsError) throw new Error(USER_MESSAGES.SERVICE_UNAVAILABLE);
   const userIds = (memberships ?? []).map((item) => item.user_id);
-  const { data: profiles } = userIds.length
+  const { data: profiles, error: profilesError } = userIds.length
     ? await context.supabase.from("profiles").select("id, full_name").in("id", userIds)
-    : { data: [] };
+    : { data: [], error: null };
+  if (profilesError) throw new Error(USER_MESSAGES.SERVICE_UNAVAILABLE);
   const profileMap = new Map((profiles ?? []).map((profile) => [profile.id, profile.full_name]));
   let emailMap = new Map<string, string>();
   let emailLookupFailed = false;
@@ -38,18 +40,13 @@ export default async function UsersPage({ searchParams }: Props) {
   }
 
   return (
-    <main className="min-h-screen bg-[#f6f8f5]">
-      <header className="border-b border-[#dce7e1] bg-white/75 px-6 py-5 sm:px-10">
-        <div className="mx-auto flex max-w-6xl items-center justify-between">
-          <Link href="/dashboard" className="flex items-center gap-3 text-sm font-semibold tracking-wide text-[#20584c]"><span className="grid h-10 w-10 place-items-center rounded-2xl bg-[#20584c] text-lg text-white">K</span>{SCHOOL_NAME}</Link>
-          <Link href="/dashboard" className="text-sm font-semibold text-[#2f7162]">Kembali ke dashboard</Link>
-        </div>
-      </header>
+    <main className="min-h-0 bg-[#f6f8f5]">
+
       <div className="mx-auto max-w-6xl px-6 py-10 sm:px-10 lg:py-14">
         <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#e98a6a]">Administrasi akses</p>
         <h1 className="mt-3 text-4xl font-semibold tracking-tight text-[#18312c]">Kelola pengguna</h1>
         <p className="mt-3 text-[#60736e]">Setujui akun dan tetapkan role sesuai kebutuhan sekolah.</p>
-        {emailLookupFailed && <p className="mt-6 rounded-xl bg-[#fff7e8] px-4 py-3 text-sm text-[#8a641c]" role="status">Email Auth belum dapat dimuat. Pastikan secret key hanya dikonfigurasi di server.</p>}
+        {emailLookupFailed && <p className="mt-6 rounded-xl bg-[#fff7e8] px-4 py-3 text-sm text-[#8a641c]" role="status">Email pengguna belum dapat dimuat. Silakan coba kembali beberapa saat lagi.</p>}
         {params.success && <p className="mt-6 rounded-xl bg-[#edf6f0] px-4 py-3 text-sm text-[#20584c]" role="status">Perubahan membership berhasil disimpan.</p>}
         {params.error && <p className="mt-6 rounded-xl bg-[#fff1ed] px-4 py-3 text-sm text-[#b85e43]" role="alert">{errorMessages[params.error] ?? "Perubahan belum berhasil."}</p>}
         <div className="mt-8 overflow-hidden rounded-[1.5rem] border border-[#dce7e1] bg-white shadow-[0_20px_60px_rgba(32,88,76,.06)]">
