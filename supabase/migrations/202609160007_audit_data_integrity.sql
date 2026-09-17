@@ -27,7 +27,7 @@ create index audit_logs_school_created_idx on public.audit_logs(school_id, creat
 create index audit_logs_school_entity_idx on public.audit_logs(school_id, entity_type, entity_id, created_at desc);
 
 alter table public.audit_logs enable row level security;
-revoke all on public.audit_logs from public, anon, authenticated, service_role;
+revoke all on public.audit_logs from public, anon, authenticated;
 grant select on public.audit_logs to authenticated;
 create policy "school admins can read tenant audit"
 on public.audit_logs for select to authenticated
@@ -41,6 +41,10 @@ begin
   if TG_OP <> 'INSERT' then
     raise exception 'Audit log bersifat append-only';
   end if;
+  if TG_TABLE_SCHEMA <> 'public' or TG_TABLE_NAME <> 'audit_logs'
+    or TG_WHEN <> 'BEFORE' or TG_LEVEL <> 'ROW' then
+    raise exception 'Konteks audit tidak valid';
+  end if;
   new.actor_user_id := auth.uid();
   new.created_at := now();
   return new;
@@ -53,10 +57,7 @@ for each row execute function public.guard_audit_log();
 create trigger audit_logs_immutable
 before update or delete on public.audit_logs
 for each row execute function public.guard_audit_log();
-create trigger audit_logs_no_truncate
-before truncate on public.audit_logs
-for each statement execute function public.guard_audit_log();
-revoke all on function public.guard_audit_log() from public, anon, authenticated, service_role;
+revoke all on function public.guard_audit_log() from public, anon, authenticated;
 
 -- SECURITY DEFINER is required solely to append audit without giving clients
 -- INSERT privilege and to resolve memberships for global profile changes.
@@ -107,6 +108,11 @@ begin
   record_id := (source_row ->> 'id')::uuid;
 
   if TG_OP = 'UPDATE' then
+    -- An identity-only rewrite must not disappear through the no-op filter.
+    if before_row -> 'id' is distinct from after_row -> 'id'
+      or before_row -> 'school_id' is distinct from after_row -> 'school_id' then
+      raise exception 'Identitas dan tenant sumber audit tidak dapat diubah';
+    end if;
     foreach field_name in array fields loop
       if before_row -> field_name is distinct from after_row -> field_name then
         changed_fields := array_append(changed_fields, field_name);
@@ -123,15 +129,15 @@ begin
       event_action := 'membership.' || case after_row ->> 'status'
         when 'active' then 'approved' when 'rejected' then 'rejected'
         when 'suspended' then 'suspended' else 'updated' end;
-      event_metadata := event_metadata || jsonb_build_object('old_status', before_row -> 'status', 'new_status', after_row -> 'status');
-    end if;
-    role_changed := before_row -> 'role' is distinct from after_row -> 'role';
-    if role_changed then
-      event_metadata := event_metadata || jsonb_build_object('old_role', before_row -> 'role', 'new_role', after_row -> 'role');
-      if before_row -> 'status' is not distinct from after_row -> 'status' then
-        event_action := 'membership.role_changed';
-        role_changed := false; -- One event for a role-only update.
-      end if;
+      event_metadata := jsonb_build_object('changed_fields', array['status'],
+        'old_status', before_row -> 'status', 'new_status', after_row -> 'status');
+      -- A simultaneous role change gets its own event, never status metadata.
+      role_changed := before_row -> 'role' is distinct from after_row -> 'role';
+    else
+      -- The no-op filter guarantees this branch is a role-only change.
+      event_action := 'membership.role_changed';
+      event_metadata := jsonb_build_object('changed_fields', array['role'],
+        'old_role', before_row -> 'role', 'new_role', after_row -> 'role');
     end if;
   elsif TG_TABLE_NAME in ('academic_years', 'semesters') and TG_OP = 'UPDATE'
     and before_row -> 'is_active' is distinct from after_row -> 'is_active' then
@@ -166,7 +172,7 @@ begin
   return null;
 end;
 $$;
-revoke all on function public.capture_foundation_audit() from public, anon, authenticated, service_role;
+revoke all on function public.capture_foundation_audit() from public, anon, authenticated;
 
 -- Coexist with all 001–006 BEFORE guards and AFTER auth/default triggers.
 -- No audit for profile creation/login/password/session/token events.
@@ -184,5 +190,12 @@ create trigger classrooms_audit after insert or update or delete on public.class
 for each row execute function public.capture_foundation_audit();
 create trigger feedbacks_audit after insert or update or delete on public.feedbacks
 for each row execute function public.capture_foundation_audit();
+
+-- Application roles cannot use TRUNCATE to bypass row-trigger audit.
+-- Privileged owner/maintenance operations are outside the normal audit trail;
+-- no TRUNCATE triggers restrict maintenance. Audit is not a database backup.
+revoke truncate on public.audit_logs, public.profiles, public.schools, public.school_memberships,
+  public.academic_years, public.semesters, public.classrooms, public.feedbacks
+from public, anon, authenticated;
 
 commit;

@@ -709,13 +709,13 @@ test('audit metadata formatter only renders known fields and enum transitions', 
   assert.equal(auditFormat.auditEntityLabel('secret'), 'Entitas');
   assert.doesNotMatch(auditFormat.auditMetadataLines({ old_role: 'secret', new_role: { token: 'secret' } }).join(' '), /secret|token/);
 });
-function auditFixture({ role = 'super_admin', status = 'active', error = null, events = [], profiles = [] } = {}) {
+function auditFixture({ role = 'super_admin', status = 'active', error = null, profileError = null, events = [], profiles = [] } = {}) {
   const calls = [];
   const context = { membership: member('a', status, 'user-a', role), supabase: { from(table) {
     const call = { table, filters: [], orders: [] }; calls.push(call);
     const query = { select(columns) { call.columns = columns; return query; }, eq(key, value) { call.filters.push([key, value]); return query; }, order(key, options) { call.orders.push([key, options]); return query; }, in(key, value) { call.filters.push([key, value]); return query; },
       async limit(count) { call.limit = count; return { data: events.filter((event) => call.filters.every(([key, value]) => event[key] === value)).slice(0, count), error }; },
-      then(resolve, reject) { return Promise.resolve({ data: profiles, error: null }).then(resolve, reject); },
+      then(resolve, reject) { return Promise.resolve({ data: profiles, error: profileError }).then(resolve, reject); },
     }; return query;
   } } };
   const audit = load('src/lib/audit.ts', { 'server-only': {}, react: { cache: (fn) => fn }, '@/lib/errors': errors, '@/lib/auth': { requireCapability: async (cap) => { assert.equal(cap, 'audit.read'); if (!capabilities.hasCapability(context, cap)) throw new Error('FORBIDDEN'); return context; } } });
@@ -780,7 +780,7 @@ test('007 static security: audit table has tenant RLS, explicit FK retention and
   assert.match(auditSql, /actor_user_id uuid,/);
   assert.match(auditSql, /created_at timestamptz not null default now\(\)/);
   assert.match(auditSql, /alter table public\.audit_logs enable row level security/);
-  assert.match(auditSql, /revoke all on public\.audit_logs from public, anon, authenticated, service_role/);
+  assert.match(auditSql, /revoke all on public\.audit_logs from public, anon, authenticated/);
   assert.match(auditSql, /grant select on public\.audit_logs to authenticated/);
   assert.doesNotMatch(auditSql, /grant\s+(?:all|insert|update|delete|truncate)/i);
   const policies = [...auditSql.matchAll(/create policy[\s\S]*?;/g)];
@@ -791,13 +791,14 @@ test('007 static security: audit table has tenant RLS, explicit FK retention and
 });
 test('007 static security: append-only guards, trusted actor/timestamp, no direct callable writer', () => {
   assert.match(auditSql, /before update or delete on public\.audit_logs/);
-  assert.match(auditSql, /before truncate on public\.audit_logs/);
+  assert.doesNotMatch(auditSql, /before truncate|service_role|reject_audited_truncate/);
   assert.match(auditSql, /if TG_OP <> 'INSERT' then\s+raise exception/);
+  assert.match(auditSql, /TG_TABLE_NAME <> 'audit_logs'\s+or TG_WHEN <> 'BEFORE' or TG_LEVEL <> 'ROW' then\s+raise exception/);
   assert.match(auditSql, /new\.actor_user_id := auth\.uid\(\);/);
   assert.match(auditSql, /new\.created_at := now\(\);/);
   assert.equal([...auditSql.matchAll(/security definer/gi)].length, 1);
   assert.match(auditSql, /security definer set search_path = pg_catalog/);
-  for (const fn of ['guard_audit_log', 'capture_foundation_audit']) assert.ok(auditSql.includes(`revoke all on function public.${fn}() from public, anon, authenticated, service_role;`));
+  for (const fn of ['guard_audit_log', 'capture_foundation_audit']) assert.ok(auditSql.includes(`revoke all on function public.${fn}() from public, anon, authenticated;`));
   assert.doesNotMatch(auditSql, /create (?:or replace )?function[^\n]*\([^)]*uuid/);
   assert.doesNotMatch(auditSql, /current_setting|request\.headers|cookie|execute format|exception when/i);
 });
@@ -828,4 +829,82 @@ test('applied migrations 001–006 match the immutable pre-stage-B checksum mani
   assert.equal(Object.keys(checksums).length, 6);
   for (const [path, expected] of Object.entries(checksums)) assert.equal(createHash('sha256').update(fs.readFileSync(path)).digest('hex'), expected, path);
   assert.equal(fs.readdirSync('supabase/migrations').some((file) => /^\d{8}0008_/.test(file)), false);
+});
+
+test('007 rejects identity rewrites and revokes application TRUNCATE without restricting maintenance', () => {
+  const guard = auditSql.indexOf("if before_row -> 'id' is distinct from after_row -> 'id'");
+  assert.ok(guard > 0 && guard < auditSql.indexOf('foreach field_name'));
+  assert.match(auditSql, /or before_row -> 'school_id' is distinct from after_row -> 'school_id' then\s+raise exception/);
+  const revoke = auditSql.match(/revoke truncate on ([\s\S]*?)from public, anon, authenticated;/);
+  assert.ok(revoke);
+  assert.deepEqual(revoke[1].split(',').map((name) => name.trim()), ['audit_logs', 'profiles', 'schools', 'school_memberships', 'academic_years', 'semesters', 'classrooms', 'feedbacks'].map((name) => `public.${name}`));
+  assert.doesNotMatch(auditSql, /before truncate|_no_truncate|reject_audited_truncate|service_role/);
+});
+test('audit taxonomy has labels for every supported foundation event', () => {
+  const expected = {
+    profile: ['updated'], school: ['updated'], membership: ['approved', 'rejected', 'suspended', 'updated', 'role_changed'],
+    academic_year: ['created', 'updated', 'activated', 'deactivated', 'deleted'], semester: ['created', 'updated', 'activated', 'deactivated', 'deleted'],
+    classroom: ['created', 'updated', 'deleted'], feedback: ['created', 'status_changed', 'deleted'],
+  };
+  for (const [entity, actions] of Object.entries(expected)) {
+    assert.notEqual(auditFormat.auditEntityLabel(entity), 'Entitas');
+    for (const action of actions) assert.notEqual(auditFormat.auditActionLabel(`${entity}.${action}`), 'Perubahan tercatat');
+  }
+});
+test('audit actor lookup errors remain generic and are not misreported as missing audit schema', async () => {
+  const fixture = auditFixture({ events: [{ id: 'own', school_id: 'a', actor_user_id: 'user-a' }], profileError: { code: '42501', message: 'PRIVATE PROFILE DETAIL' } });
+  await assert.rejects(fixture.getTenantAudit(), (error) => error.message === errors.USER_MESSAGES.SERVICE_UNAVAILABLE);
+});
+test('Activity renders real audit fields safely and distinguishes empty audit from unavailable audit', async () => {
+  const { renderToStaticMarkup } = loadDependency('react-dom/server');
+  const events = [{ id: 'log-a', action: 'membership.role_changed', actorLabel: '<script>unsafe</script>', entity_type: 'membership', entity_id: 'membership-a', created_at: '2026-09-17T01:00:00Z', metadata: { changed_fields: ['role', 'password'], old_role: 'guru', new_role: 'operator', password: 'PRIVATE VALUE', raw_session: 'PRIVATE SESSION' } }];
+  for (const rows of [events, []]) {
+    const { default: Page } = load('src/app/dashboard/activity/page.tsx', {
+      '@/lib/auth': { requireCapability: async () => ({ user: {}, profile: {}, membership: member('a') }) },
+      '@/lib/school': { getOwnFeedback: async () => [] }, '@/lib/shell': { dateLabel: (value) => value },
+      '@/lib/audit': { getTenantAudit: async () => ({ available: true, events: rows }) }, '@/lib/audit-format': auditFormat,
+      '@/components/dashboard/ui': { Page: 'main', Card: 'section' },
+    });
+    const html = renderToStaticMarkup(await Page());
+    assert.doesNotMatch(html, /PRIVATE|password|raw_session|<script>|belum tersedia/);
+    if (rows.length) {
+      assert.match(html, /Role membership diubah/);
+      assert.match(html, /Guru → Operator/);
+      assert.match(html, /membership-a/);
+      assert.match(html, /2026-09-17T01:00:00Z/);
+      assert.match(html, /&lt;script&gt;/);
+    } else assert.match(html, /Belum ada perubahan yang tercatat/);
+  }
+});
+
+// Static branch contracts for pending SQL: these tests do not execute a database
+// or claim to prove PostgreSQL trigger behavior. Runtime cases remain in the
+// disposable integration checklist.
+const membershipBranch = auditSql.split("if TG_TABLE_NAME = 'school_memberships' and TG_OP = 'UPDATE' then")[1].split("elsif TG_TABLE_NAME in")[0];
+const [membershipStatusBranch, membershipRoleOnlyBranch] = membershipBranch.split(/\n    else\n/);
+const membershipExtraRole = auditSql.split('if role_changed then')[1].split('end if;')[0];
+
+test('membership status-only SQL contract emits status metadata without role metadata', () => {
+  assert.match(membershipStatusBranch, /if before_row -> 'status' is distinct from after_row -> 'status' then/);
+  assert.match(membershipStatusBranch, /when 'active' then 'approved' when 'rejected' then 'rejected'/);
+  assert.match(membershipStatusBranch, /when 'suspended' then 'suspended' else 'updated'/);
+  assert.match(membershipStatusBranch, /event_metadata := jsonb_build_object\('changed_fields', array\['status'\],\s*'old_status', before_row -> 'status', 'new_status', after_row -> 'status'\);/);
+  assert.doesNotMatch(membershipStatusBranch, /'old_role'|'new_role'|event_metadata \|\|/);
+  // With unchanged role this expression is false, so the extra role insert cannot run.
+  assert.match(membershipStatusBranch, /role_changed := before_row -> 'role' is distinct from after_row -> 'role';/);
+});
+test('membership role-only SQL contract emits exactly the primary role event', () => {
+  assert.match(auditSql, /role_changed boolean := false;/);
+  assert.match(membershipRoleOnlyBranch, /event_action := 'membership\.role_changed';/);
+  assert.match(membershipRoleOnlyBranch, /event_metadata := jsonb_build_object\('changed_fields', array\['role'\],\s*'old_role', before_row -> 'role', 'new_role', after_row -> 'role'\);/);
+  assert.doesNotMatch(membershipRoleOnlyBranch, /role_changed :=|'old_status'|'new_status'/);
+});
+test('membership status-plus-role SQL contract keeps the two event payloads disjoint', () => {
+  assert.match(membershipStatusBranch, /'changed_fields', array\['status'\]/);
+  assert.match(membershipStatusBranch, /role_changed := before_row -> 'role' is distinct from after_row -> 'role';/);
+  assert.match(membershipExtraRole, /insert into public\.audit_logs/);
+  assert.match(membershipExtraRole, /'membership\.role_changed'/);
+  assert.match(membershipExtraRole, /jsonb_build_object\('changed_fields', array\['role'\], 'old_role', before_row -> 'role', 'new_role', after_row -> 'role'\)/);
+  assert.doesNotMatch(membershipExtraRole, /event_metadata|'old_status'|'new_status'/);
+  assert.equal([...auditSql.matchAll(/if role_changed then/g)].length, 1);
 });

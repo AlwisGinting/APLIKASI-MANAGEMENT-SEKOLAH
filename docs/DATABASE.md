@@ -79,4 +79,11 @@ UUID id; school_id wajib; actor_user_id nullable; action/entity_type text berfor
 
 `school_id` FK schools ON DELETE RESTRICT: audit tidak ikut cascade hilang ketika sekolah dihapus. Sekolah dengan audit tidak dapat hard-delete tanpa prosedur retensi khusus. `actor_user_id` sengaja referensi UUID historis **tanpa FK**; ON DELETE SET NULL akan mengubah audit append-only, CASCADE menghapus histori, RESTRICT mengikat penghapusan akun selamanya. Nilai actor tetap historical UUID jika user hilang; NULL untuk operasi tanpa auth.uid (sistem/SQL trusted). FK lama lain seperti feedback→profiles tetap dapat membatasi penghapusan akun. `entity_id` juga logical reference tanpa FK agar delete sumber tetap tercatat.
 
-No backfill: audit hanya mencatat mutation setelah 007 diterapkan. Tidak ada updated_at pada audit. Grant hanya SELECT authenticated, dengan RLS active super_admin/kepala_sekolah di tenant terkait. Direct INSERT/UPDATE/DELETE/TRUNCATE tidak diberikan ke public/anon/authenticated/service_role. Audit writer adalah trigger privileged, bukan browser/server API bebas.
+No backfill: audit hanya mencatat mutation setelah 007 diterapkan. Tidak ada updated_at pada audit. Grant hanya SELECT authenticated, dengan RLS active super_admin/kepala_sekolah di tenant terkait. Direct INSERT/UPDATE/DELETE/TRUNCATE tidak diberikan ke public/anon/authenticated. Audit writer adalah trigger privileged, bukan browser/server API bebas.
+
+
+### Final review 007 dari checkpoint 8e20086 (2026-09-17)
+
+Final 007 mempertahankan penolakan rewrite id/school_id sebelum no-op filter. Hanya PUBLIC/anon/authenticated yang terkena REVOKE, termasuk TRUNCATE pada audit_logs dan tujuh tabel sumber. Tidak ada trigger BEFORE TRUNCATE atau reject_audited_truncate, dan tidak ada REVOKE service_role. Privileged owner/maintenance berada di luar normal audit trail; TRUNCATE privileged tidak menghasilkan row DELETE events. Audit bukan pengganti backup. Constraints/FK lain tetap berlaku pada maintenance. Browser tetap tanpa direct audit INSERT/UPDATE/DELETE, dan guard append-only UPDATE/DELETE serta stamp actor/waktu tetap ada.
+
+Membership status dan role memiliki payload terpisah: status-only satu status event; role-only satu role_changed; keduanya berubah menghasilkan dua event tanpa duplikasi metadata role pada status event. Profile adalah entitas user global, jadi satu update dapat menghasilkan event nama field saja pada beberapa tenant dengan membership ACTIVE. Tidak ada nilai profil yang disalin.

@@ -12,7 +12,7 @@ Tahap E masih harus menambahkan dan menjalankan matrix mutation pada database di
 
 Draft 007 belum applied, dan harness read-only tahap A tidak menguji trigger audit. Setelah pengelola mereview dan menerapkan 007 pada database disposable, perlu suite transaksi terpisah dengan fixtures untuk:
 
-- direct INSERT audit ditolak (termasuk actor/tenant/timestamp palsu), UPDATE/DELETE/TRUNCATE ditolak; EXECUTE function trigger tidak menjadi API;
+- sebagai application roles: direct INSERT audit ditolak (termasuk actor/tenant/timestamp palsu), UPDATE/DELETE/TRUNCATE ditolak; EXECUTE function trigger tidak menjadi API;
 - audit SELECT admin A hanya tenant A, kepala sekolah sama, operator/guru/orang tua ditolak;
 - semua mutation foundation termasuk default semesters, activate/deactivate siblings, status+role sekaligus dan no-op timestamp;
 - gagal insert audit menggagalkan source mutation dalam transaksi yang sama; constraint failure sumber tidak meninggalkan event;
@@ -20,6 +20,10 @@ Draft 007 belum applied, dan harness read-only tahap A tidak menguji trigger aud
 - actor normal berasal JWT user biasa, SQL trusted tanpa principal menghasilkan NULL; actor account deletion tidak menghapus/mengubah audit;
 - source entity delete meninggalkan logical entity UUID; school deletion tertahan FK RESTRICT;
 - metadata tidak mengandung nilai pribadi/password/token/content, dan raw error tidak muncul di Activity;
-- capture function owner/search_path/EXECUTE, table grants (termasuk service_role), serta coexistence dengan triggers 001–006.
+- capture function owner/search_path/EXECUTE, table grants browser dan privilege maintenance existing, serta coexistence dengan triggers 001–006.
 
 Jangan menjalankan destructive tests ini di production. Static tests yang lolos tidak membuktikan semantics SQL runtime atau privilege Supabase project aktual. Jangan memakai service-role client untuk assertion RLS yang seharusnya dijalankan sebagai user biasa.
+
+Final hardening manual: uji status-only (satu status event, changed_fields=[status], tanpa role metadata), role-only (satu role_changed, changed_fields=[role]), dan status+role (dua event dengan metadata terpisah). Kontrak SQL statis tidak membuktikan hasil trigger runtime.
+
+UPDATE hanya id/school_id sumber tetap harus rollback. Uji TRUNCATE sebagai PUBLIC/anon/authenticated ditolak oleh privilege. Tidak ada BEFORE TRUNCATE trigger; privilege service_role/owner tidak direvoke. Operasi privileged maintenance di luar normal audit trail, tidak memicu row DELETE events, dan tetap mengikuti constraints/FK. Audit bukan pengganti backup. Semua runtime assertions ini belum dijalankan.
