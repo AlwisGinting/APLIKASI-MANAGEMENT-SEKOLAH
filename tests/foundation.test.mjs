@@ -15,7 +15,7 @@ function load(file, mocks = {}, globals = {}) {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
   }).outputText;
   vm.runInNewContext(source, {
-    module: loaded, exports: loaded.exports, URL, Response, AbortSignal,
+    module: loaded, exports: loaded.exports, URL, URLSearchParams, Headers, Response, AbortSignal,
     process: { env: { NEXT_PUBLIC_SUPABASE_URL: 'https://test.invalid' } },
     require: (id) => Object.hasOwn(mocks, id) ? mocks[id] : id === "@/lib/capabilities" ? load("src/lib/capabilities.ts") : loadDependency(id), ...globals,
   }, { filename: file });
@@ -33,9 +33,10 @@ test('redirects reject external, backslash, control and encoded bypasses', () =>
   for (const input of ['/', '/dashboard', '/reset-password', '/dashboard?tab=one#top']) assert.equal(redirect.safeNextPath(input), input);
 });
 
-function callback(auth) {
+function callback(auth, membership = { school_id: 'a', status: 'active', role: 'guru' }) {
   return load('src/app/auth/callback/route.ts', {
     '@/utils/supabase/server': { createClient: async () => ({ auth }) },
+    '@/lib/auth': { getActiveMembership: async () => membership },
     '@/lib/redirect': redirect, '@/lib/recovery': recovery,
   }).GET;
 }
@@ -53,7 +54,7 @@ function authExchange(event, failure = false) {
 const req = (query) => new NextRequest(`https://school.example/auth/callback?${query}`);
 test('callback needs a code and returns safe uncached errors', async () => {
   const response = await callback({})(req('next=/reset-password'));
-  assert.equal(response.headers.get('location'), 'https://school.example/reset-password?error=recovery');
+  assert.equal(response.headers.get('location'), 'https://school.example/reset-password?error=recovery-service');
   assert.match(response.headers.get('cache-control'), /no-store/);
   assert.equal(response.headers.get('referrer-policy'), 'no-referrer');
 });
@@ -96,6 +97,7 @@ function resetFixture({ marker = 'user-a', user = 'user-a', updateError = null }
     'next/headers': { cookies: async () => store },
     '@/utils/supabase/server': { createClient: async () => ({ auth }) },
     '@/lib/recovery': recovery, '@/lib/errors': errors, '@/lib/auth-form': authForm,
+    'next/navigation': { redirect(path) { throw new Error('REDIRECT:' + path); } },
   });
   const resetPassword = async (password, confirmation) => {
     const data = new FormData(); data.set('password', password); data.set('confirmation', confirmation);
@@ -112,13 +114,13 @@ test('password validation runs server-side before mutation', async () => {
 test('missing recovery session or different authenticated user cannot reset', async () => {
   for (const options of [{ marker: '' }, { user: null }, { user: 'other-user' }]) {
     const fixture = resetFixture(options);
-    assert.match((await fixture.resetPassword('long-password', 'long-password')).message, /tidak valid/);
+    assert.match((await fixture.resetPassword('long-password', 'long-password')).message, /browser/);
     assert.equal(fixture.updates(), 0);
   }
 });
 test('successful reset clears recovery and session cookies but preserves unrelated cookies', async () => {
   const fixture = resetFixture();
-  assert.equal((await fixture.resetPassword('long-password', 'long-password')).success, true);
+  await assert.rejects(fixture.resetPassword('long-password', 'long-password'), /REDIRECT:\/login\?reset=success/);
   assert.equal(fixture.updates(), 1);
   assert.deepEqual(fixture.removed, [recovery.RECOVERY_COOKIE, 'sb-test-auth-token.0']);
 });
@@ -827,7 +829,8 @@ test('applied migrations 001–006 match the immutable pre-stage-B checksum mani
   const { createHash } = loadDependency('node:crypto');
   const checksums = JSON.parse(fs.readFileSync('tests/fixtures/applied-migrations-001-006.json', 'utf8'));
   assert.equal(Object.keys(checksums).length, 6);
-  for (const [path, expected] of Object.entries(checksums)) assert.equal(createHash('sha256').update(fs.readFileSync(path)).digest('hex'), expected, path);
+  // Compare canonical LF content; Git core.autocrlf may materialize CRLF on Windows.
+  for (const [path, expected] of Object.entries(checksums)) assert.equal(createHash('sha256').update(fs.readFileSync(path, 'utf8').replace(/\r\n/g, '\n')).digest('hex'), expected, path);
   assert.equal(fs.readdirSync('supabase/migrations').some((file) => /^\d{8}0008_/.test(file)), false);
 });
 
@@ -881,7 +884,7 @@ test('Activity renders real audit fields safely and distinguishes empty audit fr
 // or claim to prove PostgreSQL trigger behavior. Runtime cases remain in the
 // disposable integration checklist.
 const membershipBranch = auditSql.split("if TG_TABLE_NAME = 'school_memberships' and TG_OP = 'UPDATE' then")[1].split("elsif TG_TABLE_NAME in")[0];
-const [membershipStatusBranch, membershipRoleOnlyBranch] = membershipBranch.split(/\n    else\n/);
+const [membershipStatusBranch, membershipRoleOnlyBranch] = membershipBranch.split(/\r?\n    else\r?\n/);
 const membershipExtraRole = auditSql.split('if role_changed then')[1].split('end if;')[0];
 
 test('membership status-only SQL contract emits status metadata without role metadata', () => {
@@ -907,4 +910,307 @@ test('membership status-plus-role SQL contract keeps the two event payloads disj
   assert.match(membershipExtraRole, /jsonb_build_object\('changed_fields', array\['role'\], 'old_role', before_row -> 'role', 'new_role', after_row -> 'role'\)/);
   assert.doesNotMatch(membershipExtraRole, /event_metadata|'old_status'|'new_status'/);
   assert.equal([...auditSql.matchAll(/if role_changed then/g)].length, 1);
+});
+
+// Model committed row state so a failed second request cannot hide deactivation.
+for (const entity of ['academic_year', 'semester']) {
+  test(`${entity}: editing an active period preserves activation when RPC fails`, async () => {
+    const row = { id: 'period-a', school_id: 'a', is_active: true };
+    let rpcCalls = 0;
+    const client = {
+      from(table) {
+        let payload;
+        const q = {
+          select() { return q; }, eq() { return q; },
+          update(value) { payload = value; return q; },
+          async maybeSingle() {
+            if (entity === 'semester' && table === 'academic_years') return { data: { id: 'year-a', start_date: '2026-01-01', end_date: '2026-12-31' }, error: null };
+            if (payload) Object.assign(row, payload);
+            return { data: { ...row }, error: null };
+          },
+        };
+        return q;
+      },
+      async rpc() { rpcCalls++; return { error: { code: 'unavailable' } }; },
+    };
+    const context = { supabase: client, membership: member('a'), user: { id: 'user-a' } };
+    const actions = load('src/app/dashboard/master/actions.ts', {
+      '@/lib/auth': { requireCapability: async () => context },
+      'next/cache': { revalidatePath() {} },
+      'next/navigation': { redirect(path) { throw new Error(`REDIRECT:${path}`); } },
+    });
+    const action = entity === 'academic_year' ? actions.saveAcademicYear : actions.saveSemester;
+    const input = { id: row.id, academic_year_id: 'year-a', name: 'Ganjil', start_date: '2026-02-01', end_date: '2026-06-01', is_active: 'on' };
+    await assert.rejects(action(formData(input)), /error=save/);
+    assert.equal(rpcCalls, 1);
+    assert.equal(row.is_active, true, 'failed activation must not deactivate the committed period');
+    await assert.rejects(action(formData({ ...input, is_active: '' })), /success=saved/);
+    assert.equal(row.is_active, false, 'explicit deactivation remains supported');
+    assert.equal(rpcCalls, 1);
+  });
+}
+
+async function recoveryFlowFixture() {
+  const jar = new Map();
+  let recoveryRedirect;
+  let challenge;
+  let exchanges = 0;
+  const payload = Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600, sub: 'user-a' })).toString('base64url');
+  const options = {
+    auth: { experimental: { appendPkceFlowIdToRedirects: true } },
+    cookies: { getAll: () => [...jar].map(([name, value]) => ({ name, value })), setAll: (items) => items.forEach(({ name, value }) => jar.set(name, value)) },
+    global: { fetch: async (input, init) => {
+      const url = new URL(String(input));
+      const body = JSON.parse(init?.body ?? '{}');
+      if (url.pathname.endsWith('/recover')) {
+        recoveryRedirect = new URL(url.searchParams.get('redirect_to'));
+        challenge = body.code_challenge;
+        return Response.json({});
+      }
+      if (url.pathname.endsWith('/token')) {
+        exchanges++;
+        const actual = loadDependency('node:crypto').createHash('sha256').update(body.code_verifier).digest('base64url');
+        if (actual !== challenge) return Response.json({ code: 'bad_code_verifier', msg: 'private mismatch' }, { status: 422 });
+        return Response.json({ access_token: `eyJhbGciOiJIUzI1NiJ9.${payload}.test`, refresh_token: 'fake-refresh', token_type: 'bearer', expires_in: 3600, user: { id: 'user-a' } });
+      }
+      throw new Error('Unexpected request in offline fixture');
+    } },
+  };
+  await createServerClient('https://test.invalid', 'test-publishable', options).auth.resetPasswordForEmail('test@example.invalid', { redirectTo: 'https://school.example/auth/callback?next=/reset-password' });
+  const firstFlow = recoveryRedirect.searchParams.get('sb_flow_id');
+  assert.ok(firstFlow);
+  // Another tab starts Google login after the recovery email was sent.
+  await createServerClient('https://test.invalid', 'test-publishable', options).auth.signInWithOAuth({ provider: 'google', options: { redirectTo: 'https://school.example/auth/callback', skipBrowserRedirect: true } });
+  return { jar, firstFlow, auth: createServerClient('https://test.invalid', 'test-publishable', options).auth, exchanges: () => exchanges };
+}
+
+test('recovery callback selects its PKCE verifier after another OAuth flow starts', async () => {
+  const fixture = await recoveryFlowFixture();
+  const response = await callback(fixture.auth)(req(`code=fake-code&next=/reset-password&sb_flow_id=${fixture.firstFlow}`));
+  assert.equal(response.headers.get('location'), 'https://school.example/reset-password');
+  assert.equal(response.cookies.get(recovery.RECOVERY_COOKIE).value, 'user-a');
+  assert.equal(fixture.exchanges(), 1);
+});
+
+function googleActions(origin = 'https://aplikasi-management-sekolah.vercel.app', result = { data: { url: 'https://test.invalid/auth/v1/authorize?provider=google' }, error: null }) {
+  const calls = [];
+  const actions = load('src/app/auth/google-actions.ts', {
+    '@/lib/auth-origin': { authOrigin: async () => origin },
+    '@/utils/supabase/server': { createClient: async (options) => { calls.push({ options }); return { auth: { async signInWithOAuth(input) { calls.push(input); if (result instanceof Error) throw result; return result; } } }; } },
+    'next/navigation': { redirect(path) { throw new Error(`REDIRECT:${path}`); } },
+  });
+  return { ...actions, calls };
+}
+
+test('Google login requests only identity scopes and redirects through the configured Supabase endpoint', async () => {
+  for (const origin of ['https://aplikasi-management-sekolah.vercel.app', 'http://localhost:3000']) {
+    const fixture = googleActions(origin);
+    await assert.rejects(fixture.googleLoginAction(), /REDIRECT:https:\/\/test.invalid\/auth\/v1\/authorize\?provider=google/);
+    assert.equal(fixture.calls[0].options.writable, true);
+    const request = fixture.calls[1];
+    assert.equal(request.provider, 'google');
+    assert.equal(request.options.redirectTo, `${origin}/auth/callback?next=/dashboard&flow=google`);
+    assert.equal(request.options.scopes, 'openid email profile');
+    assert.equal(request.options.skipBrowserRedirect, true);
+    assert.equal(request.options.queryParams.prompt, 'select_account');
+    assert.doesNotMatch(JSON.stringify(request), /drive|gmail|calendar|contacts|offline|access_type|role|school_id/);
+  }
+});
+
+test('Google login rejects untrusted application origins before creating a verifier', async () => {
+  const fixture = googleActions('https://evil.example');
+  const state = await fixture.googleLoginAction();
+  assert.equal(state.success, false);
+  assert.equal(fixture.calls.length, 0);
+  assert.doesNotMatch(state.message, /evil/);
+});
+
+test('Google initiation provider errors and unexpected destinations are safe and generic', async () => {
+  for (const result of [new Error('PRIVATE_TOKEN'), { data: { url: null }, error: { message: 'PRIVATE_TOKEN' } }, { data: { url: 'https://evil.example/auth/v1/authorize?provider=google' }, error: null }]) {
+    const state = await googleActions(undefined, result).googleLoginAction();
+    assert.equal(state.success, false);
+    assert.doesNotMatch(state.message, /PRIVATE_TOKEN|evil/);
+  }
+});
+
+test('Google button uses its OAuth server action with pending and duplicate-submit protection', async () => {
+  const { renderToStaticMarkup } = loadDependency('react-dom/server');
+  let actionInvoked = 0;
+  const oauth = async () => { actionInvoked++; return { success: false, message: '' }; };
+  const { GoogleLogin } = load('src/components/auth/google-login.tsx', {
+    '@/app/auth/google-actions': { googleLoginAction: oauth }, '@/lib/auth-form': authForm,
+    './auth-form': { FormAlert: () => null },
+  });
+  const html = renderToStaticMarkup(loadDependency('react').createElement(GoogleLogin));
+  assert.match(html, /Lanjutkan dengan Google/);
+  assert.match(html, /type="submit"/);
+  assert.doesNotMatch(html, /type="password"/);
+  assert.equal(actionInvoked, 0, 'rendering must not start OAuth');
+  const source = fs.readFileSync('src/components/auth/google-login.tsx', 'utf8');
+  assert.match(source, /useActionState\(googleLoginAction/);
+  assert.match(source, /lock.current \|\| pending/);
+  assert.match(source, /disabled=\{pending\}/);
+});
+
+test('OAuth callback exchanges exactly once, passes flow ID and never turns next into recovery', async () => {
+  let calls = 0;
+  const auth = authExchange('SIGNED_IN');
+  const exchange = auth.exchangeCodeForSession;
+  auth.exchangeCodeForSession = async (code, options) => {
+    calls++; assert.equal(code, 'one-use'); assert.equal(options.flowId, 'abcdefgh'); return exchange();
+  };
+  const response = await callback(auth)(req('code=one-use&flow=google&sb_flow_id=abcdefgh&next=https://evil.example&role=super_admin&school_id=foreign'));
+  assert.equal(calls, 1);
+  assert.equal(response.headers.get('location'), 'https://school.example/dashboard');
+  assert.equal(response.cookies.get(recovery.RECOVERY_COOKIE).value, '');
+});
+
+for (const status of ['pending', 'rejected', 'suspended']) {
+  test(`Google ${status} membership remains outside the tenant even with privileged OAuth metadata`, async () => {
+    const db = tenantDatabase({ profiles: [{ id: 'user-a' }], school_memberships: [member('a', status, 'user-a', null)], schools: [schoolRow('a')] }, {
+      id: 'user-a', app_metadata: { provider: 'google' }, user_metadata: { role: 'super_admin', school_id: 'foreign', status: 'active' },
+    });
+    const auth = load('src/lib/auth.ts', {
+      'server-only': {}, react: { cache: (fn) => fn }, 'next/navigation': { redirect(path) { throw new Error(path); } },
+      'next/headers': { cookies: async () => ({ get: () => ({ value: 'foreign' }) }) },
+      '@/config/app': appConfig, '@/lib/errors': errors,
+      '@/utils/supabase/server': { createClient: async () => db.client },
+    });
+    assert.equal(await auth.getActiveMembership(), null);
+    await assert.rejects(auth.getActiveTenantContext(), /pending-approval/);
+    const response = await callback(authExchange('SIGNED_IN'), null)(req('code=test&flow=google&role=super_admin&school_id=foreign'));
+    assert.equal(response.headers.get('location'), 'https://school.example/pending-approval');
+  });
+}
+
+test('Google user with no membership or inactive school receives no tenant access', async () => {
+  for (const memberships of [[], [member('a')]]) {
+    const context = tenantFixture(memberships);
+    if (memberships.length) {
+      const db = tenantDatabase({ profiles: [], school_memberships: memberships, schools: [{ ...schoolRow('a'), is_active: false }] });
+      const auth = load('src/lib/auth.ts', { 'server-only': {}, react: { cache: (fn) => fn }, 'next/navigation': {}, 'next/headers': { cookies: async () => ({ get: () => undefined }) }, '@/config/app': appConfig, '@/lib/errors': errors, '@/utils/supabase/server': { createClient: async () => db.client } });
+      assert.equal(await auth.getActiveMembership(), null);
+    } else assert.equal(await context.getActiveMembership(), null);
+  }
+});
+
+test('OAuth cancellation and provider errors do not exchange codes or echo details', async () => {
+  for (const query of ['error=access_denied&error_description=PRIVATE_TOKEN', 'error_code=provider_error&code=unused', '']) {
+    const response = await callback({})(req(`flow=google&${query}`));
+    assert.equal(response.headers.get('location'), 'https://school.example/login?error=oauth');
+    assert.doesNotMatch(response.headers.get('location'), /PRIVATE_TOKEN|unused|provider_error/);
+    assert.match(response.headers.get('cache-control'), /no-store/);
+    assert.equal(response.headers.get('referrer-policy'), 'no-referrer');
+  }
+});
+
+test('recovery errors distinguish unavailable verifier, expired flow and internal failure', async () => {
+  for (const [error, category] of [
+    [{ code: 'pkce_code_verifier_not_found' }, 'browser'], [{ code: 'bad_code_verifier', status: 422 }, 'browser'],
+    [{ code: 'flow_state_expired' }, 'invalid'], [{ code: 'flow_state_not_found' }, 'invalid'],
+    [{ code: 'unexpected_failure', status: 500 }, 'service'], [{ status: 422 }, 'service'],
+  ]) {
+    const auth = { onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }), exchangeCodeForSession: async () => ({ data: {}, error: { ...error, message: 'PRIVATE_TOKEN' } }) };
+    const response = await callback(auth)(req('next=/reset-password&code=test'));
+    assert.equal(response.headers.get('location'), `https://school.example/reset-password?error=recovery-${category}`);
+    const message = recovery.recoveryMessage(`recovery-${category}`);
+    assert.doesNotMatch(message, /PRIVATE_TOKEN|422|500/);
+    if (category !== 'invalid') assert.doesNotMatch(message, /kedaluwarsa|sudah tidak berlaku/);
+  }
+});
+
+test('malformed explicit flow IDs cannot borrow the legacy verifier or exchange a code', async () => {
+  for (const value of ['', 'bad', '../foreign', 'abcdefgh&sb_flow_id=ijklmnop']) {
+    const response = await callback({})(req(`next=/reset-password&code=test&sb_flow_id=${value}`));
+    assert.match(response.headers.get('location'), /error=recovery-browser$/);
+  }
+});
+
+test('missing per-flow verifier fails before token exchange and preserves other flow cookies', async () => {
+  const fixture = await recoveryFlowFixture();
+  fixture.jar.delete(`sb-test-auth-token-flow-${fixture.firstFlow}-code-verifier`);
+  const others = [...fixture.jar.keys()].filter((name) => name.includes('-flow-'));
+  const response = await callback(fixture.auth)(req(`code=test&next=/reset-password&sb_flow_id=${fixture.firstFlow}`));
+  assert.match(response.headers.get('location'), /error=recovery-browser$/);
+  assert.equal(fixture.exchanges(), 0);
+  for (const name of others) assert.ok(fixture.jar.has(name));
+});
+
+test('proxy leaves callback code exchange and old-session handling to the callback', async () => {
+  const { proxy } = load('src/proxy.ts', {
+    '@supabase/ssr': { createServerClient() { throw new Error('Must not initialize old session in callback proxy'); } },
+    '@/utils/supabase/fetch': {},
+  });
+  const response = await proxy(req('code=one-use'));
+  assert.match(response.headers.get('cache-control'), /no-store/);
+});
+
+test('recovery legacy forwarding preserves flow ID and valid marker displays the form', async () => {
+  const page = (marker, user) => load('src/app/reset-password/page.tsx', {
+    'next/headers': { cookies: async () => ({ get: () => marker ? { value: marker } : undefined }) },
+    'next/navigation': { redirect(path) { throw new Error(`REDIRECT:${path}`); } },
+    '@/utils/supabase/server': { createClient: async () => ({ auth: { getUser: async () => ({ data: { user }, error: null }) } }) },
+    '@/lib/recovery': recovery, './reset-form': { ResetPasswordForm: () => null },
+  }).default;
+  await assert.rejects(page(null, null)({ searchParams: Promise.resolve({ code: 'one-use', sb_flow_id: 'abcdefgh' }) }), /sb_flow_id=abcdefgh/);
+  const result = await page('user-a', { id: 'user-a' })({ searchParams: Promise.resolve({}) });
+  assert.equal(result.props.ready, true);
+  assert.equal(result.props.initialError, '');
+  const missing = await page(null, null)({ searchParams: Promise.resolve({ error: 'recovery-service' }) });
+  assert.equal(missing.props.ready, false);
+  assert.equal(missing.props.initialError, recovery.RECOVERY_SERVICE_ERROR);
+});
+
+test('provider tokens are removed before the real SSR SDK writes session cookies', async () => {
+  const jar = new Map();
+  const payload = Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600, sub: 'user-a' })).toString('base64url');
+  const { supabaseFetch } = load('src/utils/supabase/fetch.ts', {}, { fetch: async () => Response.json({
+    access_token: `eyJhbGciOiJIUzI1NiJ9.${payload}.test`, refresh_token: 'app-refresh', token_type: 'bearer', expires_in: 3600,
+    provider_token: 'GOOGLE_ACCESS_SECRET', provider_refresh_token: 'GOOGLE_REFRESH_SECRET', user: { id: 'user-a' },
+  }) });
+  const client = createServerClient('https://test.invalid', 'test-key', {
+    global: { fetch: supabaseFetch },
+    cookies: { getAll: () => [...jar].map(([name, value]) => ({ name, value })), setAll: (items) => items.forEach(({ name, value }) => jar.set(name, value)) },
+  });
+  await client.auth.signInWithOAuth({ provider: 'google', options: { skipBrowserRedirect: true } });
+  const { data, error } = await client.auth.exchangeCodeForSession('fake-code');
+  assert.equal(error, null);
+  assert.equal(data.session.provider_token, undefined);
+  assert.equal(data.session.provider_refresh_token, undefined);
+  const encoded = jar.get('sb-test-auth-token');
+  const session = JSON.parse(Buffer.from(encoded.slice('base64-'.length), 'base64url').toString());
+  assert.equal(session.refresh_token, 'app-refresh');
+  assert.doesNotMatch(JSON.stringify(session), /GOOGLE_|provider_token|provider_refresh_token/);
+});
+
+test('server client enables SDK flow IDs and treats writable cookie failures as errors', async () => {
+  let options;
+  const { createClient } = load('src/utils/supabase/server.ts', {
+    './fetch': {}, '@supabase/ssr': { createServerClient(_url, _key, value) { options = value; return {}; } },
+    'next/headers': { cookies: async () => ({ getAll: () => [], set() { throw new Error('cookie write failed'); } }) },
+  });
+  await createClient({ writable: true });
+  assert.equal(options.auth.experimental.appendPkceFlowIdToRedirects, true);
+  assert.throws(() => options.cookies.setAll([{ name: 'test', value: 'test', options: {} }]), /cookie write failed/);
+  await createClient();
+  assert.doesNotThrow(() => options.cookies.setAll([{ name: 'test', value: 'test', options: {} }]));
+});
+
+test('new Google auth users inherit only the existing pending membership trigger contract', () => {
+  const sql = fs.readFileSync('supabase/migrations/202609100002_auth_membership_security.sql', 'utf8');
+  const trigger = sql.split('create or replace function public.handle_new_user()')[1].split('drop trigger')[0];
+  assert.match(trigger, /values \(default_school_id, new.id, 'pending', null\)/);
+  assert.match(trigger, /slug = 'kb-devfanta-melati'/);
+  assert.doesNotMatch(trigger, /raw_user_meta_data\s*->>\s*'(role|school_id|status)'/);
+  const actions = fs.readFileSync('src/app/auth/google-actions.ts', 'utf8');
+  assert.doesNotMatch(actions, /service_role|createAdminClient|linkIdentity|auth\.admin|from\(/);
+});
+
+test('framework headers preserve no-referrer for callback and legacy reset URLs', async () => {
+  const rules = await load('next.config.ts').default.headers();
+  for (const path of ['/auth/callback', '/reset-password']) {
+    const matching = rules.filter((rule) => rule.source === '/(.*)' || rule.source === path);
+    const values = matching.flatMap((rule) => rule.headers.filter((header) => header.key === 'Referrer-Policy'));
+    assert.equal(values.at(-1).value, 'no-referrer');
+  }
 });

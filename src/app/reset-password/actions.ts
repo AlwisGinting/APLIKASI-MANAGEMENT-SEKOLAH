@@ -1,10 +1,11 @@
 "use server";
 
+import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { createClient } from "@/utils/supabase/server";
 import { authFailure, field, validateAuthForm, type AuthFormState } from "@/lib/auth-form";
-import { RECOVERY_COOKIE, RECOVERY_ERROR } from "@/lib/recovery";
-import { USER_MESSAGES } from "@/lib/errors";
+import { RECOVERY_COOKIE, RECOVERY_ERROR, RECOVERY_SERVICE_ERROR } from "@/lib/recovery";
+
 
 export async function resetPasswordAction(_previous: AuthFormState, data: FormData): Promise<AuthFormState> {
   const invalid = validateAuthForm("reset", data);
@@ -16,7 +17,7 @@ export async function resetPasswordAction(_previous: AuthFormState, data: FormDa
     if (!marker) return { success: false, message: RECOVERY_ERROR };
     const supabase = await createClient();
     const { data: { user }, error } = await supabase.auth.getUser();
-    if (error && (!error.status || error.status >= 500)) return { success: false, message: USER_MESSAGES.SERVICE_UNAVAILABLE };
+    if (error && (!error.status || error.status >= 500)) return { success: false, message: RECOVERY_SERVICE_ERROR };
     if (error || !user || marker !== user.id) return { success: false, message: RECOVERY_ERROR };
     const { error: updateError } = await supabase.auth.updateUser({ password });
     if (updateError) return authFailure("reset", updateError);
@@ -28,6 +29,7 @@ export async function resetPasswordAction(_previous: AuthFormState, data: FormDa
     for (const cookie of store.getAll()) {
       if (cookie.name === storageKey || cookie.name.startsWith(`${storageKey}.`)) store.delete(cookie.name);
     }
-    return { success: true, message: "Kata sandi berhasil diperbarui. Silakan masuk kembali." };
-  } catch { return { success: false, message: USER_MESSAGES.SERVICE_UNAVAILABLE }; }
+    // Redirect below, before cookie invalidation can rerender the gated reset page.
+  } catch { return { success: false, message: RECOVERY_SERVICE_ERROR }; }
+  redirect("/login?reset=success");
 }

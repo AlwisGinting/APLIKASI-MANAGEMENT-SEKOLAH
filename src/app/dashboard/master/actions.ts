@@ -34,7 +34,7 @@ export async function saveAcademicYear(formData: FormData) {
     const { data: existing } = await context.supabase.from("academic_years").select("id").eq("id", id).eq("school_id", context.membership.school_id).maybeSingle();
     if (!existing) redirectError(YEAR_PATH, "not-found");
   }
-  const payload = { school_id: context.membership.school_id, name, start_date: startDate, end_date: endDate, is_active: false, updated_at: new Date().toISOString() };
+  const payload = { school_id: context.membership.school_id, name, start_date: startDate, end_date: endDate, ...(id && isActive ? {} : { is_active: false }), updated_at: new Date().toISOString() };
   const result = id
     ? await context.supabase.from("academic_years").update(payload).eq("id", id).eq("school_id", context.membership.school_id).select("id").maybeSingle()
     : await context.supabase.from("academic_years").insert(payload).select("id").single();
@@ -71,7 +71,7 @@ export async function saveSemester(formData: FormData) {
   const { data: year } = await context.supabase.from("academic_years").select("id, start_date, end_date").eq("id", academicYearId).eq("school_id", context.membership.school_id).maybeSingle();
   if (!year || startDate < year.start_date || endDate > year.end_date) redirectError(SEMESTER_PATH, "date-range");
   if (id) { const { data: existing } = await context.supabase.from("semesters").select("id").eq("id", id).eq("school_id", context.membership.school_id).maybeSingle(); if (!existing) redirectError(SEMESTER_PATH, "not-found"); }
-  const payload = { school_id: context.membership.school_id, academic_year_id: academicYearId, name, start_date: startDate, end_date: endDate, is_active: false, updated_at: new Date().toISOString() };
+  const payload = { school_id: context.membership.school_id, academic_year_id: academicYearId, name, start_date: startDate, end_date: endDate, ...(id && isActive ? {} : { is_active: false }), updated_at: new Date().toISOString() };
   const result = id ? await context.supabase.from("semesters").update(payload).eq("id", id).eq("school_id", context.membership.school_id).select("id").maybeSingle() : await context.supabase.from("semesters").insert(payload).select("id").single();
   if (result.error || (id && !result.data)) redirectError(SEMESTER_PATH, result.error?.code === "23505" ? "duplicate" : "save");
   const savedId = id || result.data?.id;

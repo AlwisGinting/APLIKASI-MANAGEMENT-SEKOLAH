@@ -1,3 +1,7 @@
+> **Auth update — 2026-09-24:** See [combined recovery + Google login review](AUTH-FOUNDATION.md) for current source behavior, required provider/redirect configuration, validation and remaining manual gates. This supersedes older auth-flow descriptions below; no production deployment has been performed.
+
+> **Current status — 2026-09-24:** Owner confirms migrations 001–007 applied in production and immutable. Do not edit or rerun them. Statements below saying 007 (or earlier migrations) is draft/unapplied describe historical work, not current deployment instructions. See [current readiness audit](READINESS-2026-09-24.md) and [Stage C Storage/backup design](STORAGE.md). Live RLS and authenticated smoke testing remain manual gates. No 008, Storage hardening deployment, Drive connection or backup automation was performed in this review.
+
 # Security
 
 - Aktifkan RLS untuk semua tabel tenant dan selalu filter berdasarkan membership `active`.

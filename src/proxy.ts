@@ -5,6 +5,8 @@ import { supabaseFetch } from "@/utils/supabase/fetch";
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
   response.headers.set("Cache-Control", "private, no-store");
+  // Callback owns code exchange; do not refresh an older session before PKCE.
+  if (request.nextUrl.pathname === "/auth/callback") return response;
   const supabase = createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!, {
     global: { fetch: supabaseFetch },
     cookies: {

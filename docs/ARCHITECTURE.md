@@ -1,3 +1,5 @@
+> **Current status — 2026-09-24:** Owner confirms migrations 001–007 applied in production and immutable. Do not edit or rerun them. Statements below saying 007 (or earlier migrations) is draft/unapplied describe historical work, not current deployment instructions. See [current readiness audit](READINESS-2026-09-24.md) and [Stage C Storage/backup design](STORAGE.md). Live RLS and authenticated smoke testing remain manual gates. No 008, Storage hardening deployment, Drive connection or backup automation was performed in this review.
+
 # Arsitektur
 
 Aplikasi menggunakan Next.js App Router sebagai web application dan PWA-ready shell. Route publik berada di `src/app`; helper Supabase berada di `src/utils/supabase`.

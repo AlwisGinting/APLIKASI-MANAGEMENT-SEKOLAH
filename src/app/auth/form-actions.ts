@@ -12,7 +12,7 @@ export async function registerAction(_previous: AuthFormState, data: FormData): 
   if (invalid) return invalid;
   try {
     const origin = await authOrigin();
-    const supabase = await createClient();
+    const supabase = await createClient({ writable: true });
     const { data: result, error } = await supabase.auth.signUp({
       email: field(data, "email").trim(), password: field(data, "password"),
       options: { data: { full_name: field(data, "full_name").trim() }, emailRedirectTo: `${origin}/auth/callback?next=/dashboard` },
@@ -35,7 +35,7 @@ export async function loginAction(_previous: AuthFormState, data: FormData): Pro
   const invalid = validateAuthForm("login", data);
   if (invalid) return invalid;
   try {
-    const supabase = await createClient();
+    const supabase = await createClient({ writable: true });
     const { error } = await supabase.auth.signInWithPassword({ email: field(data, "email").trim(), password: field(data, "password") });
     if (error) return authFailure("login", error);
   } catch { return authFailure("login"); }
@@ -48,7 +48,7 @@ export async function forgotPasswordAction(_previous: AuthFormState, data: FormD
   if (invalid) return invalid;
   try {
     const origin = await authOrigin();
-    const supabase = await createClient();
+    const supabase = await createClient({ writable: true });
     const { error } = await supabase.auth.resetPasswordForEmail(field(data, "email").trim(), { redirectTo: `${origin}/auth/callback?next=/reset-password` });
     if (error && (!error.status || error.status >= 500)) return authFailure("forgot", error);
     return { success: true, message: recoverySent };
