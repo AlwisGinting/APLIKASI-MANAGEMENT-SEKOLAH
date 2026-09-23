@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/utils/supabase/server";
-import { getActiveMembership } from "@/lib/auth";
+import { accountStatePath, getAccountState } from "@/lib/auth";
 import { safeNextPath } from "@/lib/redirect";
 import { RECOVERY_COOKIE, RECOVERY_MAX_AGE, recoveryFailure } from "@/lib/recovery";
 
@@ -49,7 +49,9 @@ export async function GET(request: NextRequest) {
       return response;
     }
     if (recoveryRequested) return failure("recovery-invalid");
-    if (!(await getActiveMembership())) return go("/pending-approval");
-    return go(nextPath);
+    const account = await getAccountState();
+    if (account.state === "active") return go(nextPath);
+    if (account.state === "unauthenticated") return go("/login?error=verification");
+    return go(accountStatePath(account.state));
   } catch { return failure(); }
 }

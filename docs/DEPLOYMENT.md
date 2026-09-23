@@ -22,6 +22,22 @@ Local `.env.local` dan Vercel harus memakai tiga nama variable yang sama:
 
 Jangan menyalin value antar project atau membuat akun kedua sebagai workaround. Jika URL project berbeda, akun Auth memang tidak dibagikan antar project. Setelah memperbaiki environment Vercel, lakukan redeploy agar runtime memakai value baru.
 
+## Checklist local + public application
+
+Localhost dan Vercel harus menunjuk ke project Supabase yang sama. Nilai tidak perlu dibagikan antar origin: browser memang menyimpan cookie session yang berbeda, tetapi `auth.users`, `profiles`, `school_memberships`, dan role tetap berasal dari database yang sama.
+
+- Local `.env.local` dan Vercel Production memakai nama `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, dan `SUPABASE_SECRET_KEY`.
+- Vercel Production harus memakai URL project yang sama dengan local. Periksa nama variable dan target environment di Vercel tanpa menyalin nilainya ke chat atau repository.
+- Deployment Vercel harus berasal dari source terbaru yang disetujui, minimal commit `654a906` untuk Google foundation atau commit lanjutan yang memuat perbaikannya. Cocokkan deployment commit SHA di Vercel, bukan hanya branch name.
+- Supabase **Authentication → URL Configuration → Site URL**: `https://aplikasi-management-sekolah.vercel.app`.
+- Supabase Redirect URLs harus memuat callback production dan localhost, termasuk pola `next=/dashboard`, `next=/reset-password`, `flow=google`, dan `sb_flow_id=*`. Gunakan daftar lengkap di [AUTH-FOUNDATION.md](AUTH-FOUNDATION.md); jangan menambah wildcard domain umum.
+- Supabase **Authentication → Providers → Google** harus enabled dan memakai provider yang sama untuk kedua origin.
+- Google Cloud Authorized JavaScript origins: `https://aplikasi-management-sekolah.vercel.app` dan `http://localhost:3000`.
+- Google Cloud Authorized redirect URI harus disalin persis dari Supabase **Authentication → Providers → Google**, berbentuk `https://<project-ref>.supabase.co/auth/v1/callback`. Ini berbeda dari callback aplikasi `/auth/callback`.
+- Confirm Email adalah keputusan owner. Jika dimatikan, signup password dapat menerima session segera tetapi tetap pending dengan role `NULL`; jika diaktifkan, email verification tetap diperlukan.
+
+Jika akun super admin bekerja di localhost tetapi tidak di public application, repository tidak dapat memastikan penyebab dari sini. Klasifikasi paling mungkin adalah **A/B/G**: project Supabase atau Vercel environment berbeda, atau deployment public belum memuat source/environment yang sama. **C/D** perlu diperiksa bila login Google gagal di callback. **F** perlu diperiksa bila Auth user yang sama berhasil login tetapi membership/role database berbeda. Jangan membuat akun atau membership kedua sebagai workaround.
+
 ## Auth redirect checklist
 
 Server Actions memakai Origin request yang divalidasi terhadap host untuk register verification dan forgot password, serta request origin untuk `/auth/callback`; tidak ada redirect auth yang memaksa localhost atau production.

@@ -22,6 +22,8 @@ Aplikasi menggunakan Next.js App Router sebagai web application dan PWA-ready sh
 
 `requireUser()`, `getActiveMembership()`, `requireActiveMembership()`, dan `requireSchoolRole(roles)` menjadi fondasi reusable. Wrapper admin/master memakai role helper yang sama. Pemilihan tenant mempertahankan perilaku existing: membership aktif pertama berdasarkan waktu pembuatan; belum ada tenant switcher.
 
+Account state is centralized in `getAccountState()` and derived from the current Auth user, all owned memberships, and validated active tenant options. The states are `unauthenticated`, `active`, `pending`, `rejected`, `suspended`, and `no_membership`; a first-membership row is not used to decide the account state. The selected-tenant cookie still only chooses among currently valid active tenants.
+
 Recovery melewati callback server, form reset, dan Server Action `updateUser({ password })`. Cookie HttpOnly 15 menit mencatat bahwa browser baru saja menyelesaikan recovery untuk user tersebut. Cookie ini hanya penanda alur UI, bukan credential/otorisasi tambahan: Supabase Auth tetap menentukan apakah user boleh mengganti password dirinya sendiri. Session Auth standar tetap memakai cookie SDK, bukan custom shared-cookie domain.
 
 Halaman auth/private dirender dinamis, fetch backend memakai `no-store`, dan proxy mempertahankan cookie serta header anti-cache SDK. Endpoint health tidak masuk matcher proxy. Timeout 12 detik berlaku per request backend; retry internal SDK dapat menambah durasi total.

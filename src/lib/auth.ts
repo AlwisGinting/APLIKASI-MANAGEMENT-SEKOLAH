@@ -5,7 +5,7 @@ import { hasCapability, type Capability } from "@/lib/capabilities";
 import { redirect } from "next/navigation";
 import { createClient } from "@/utils/supabase/server";
 import { APP_CONFIG, AUTH_ROLES, type AppRole, type MembershipStatus } from "@/config/app";
-import { ERROR_CODES, USER_MESSAGES } from "@/lib/errors";
+import { USER_MESSAGES } from "@/lib/errors";
 
 export const SCHOOL_ID = "00000000-0000-0000-0000-000000000001";
 export const SCHOOL_NAME = APP_CONFIG.name.replace("SIM ", "");
@@ -25,6 +25,8 @@ export type Membership = {
   created_at: string;
   updated_at: string;
 };
+
+export type AccountState = "unauthenticated" | "active" | "pending" | "rejected" | "suspended" | "no_membership";
 
 // React cache deduplicates only within a server render, never across users.
 export const getAuthContext = cache(async function getAuthContext() {
@@ -73,15 +75,35 @@ export const getTenantOptions = cache(async () => {
   return { ...context, tenantOptions };
 });
 
+export function accountStateFromContext(
+  user: { id: string } | null,
+  memberships: Membership[],
+  tenantOptions: Array<{ school: TenantSchool; membership: Membership }>,
+): AccountState {
+  if (!user) return "unauthenticated";
+  if (tenantOptions.length) return "active";
+  if (memberships.some((membership) => membership.status === "suspended")) return "suspended";
+  if (memberships.some((membership) => membership.status === "rejected")) return "rejected";
+  if (memberships.some((membership) => membership.status === "pending")) return "pending";
+  return "no_membership";
+}
+
+export function accountStatePath(state: Exclude<AccountState, "unauthenticated" | "active">) {
+  return `/pending-approval?status=${state}`;
+}
+
+export const getAccountState = cache(async () => {
+  const context = await getTenantOptions();
+  return { ...context, state: accountStateFromContext(context.user, context.memberships, context.tenantOptions) };
+});
+
 export const getActiveTenantContext = cache(async () => {
   const context = await getTenantOptions();
+  const state = accountStateFromContext(context.user, context.memberships, context.tenantOptions);
   const selected = (await cookies()).get(ACTIVE_SCHOOL_COOKIE)?.value;
   // Deterministic fallback is only used for absent/stale preferences; a valid selection wins.
   const tenant = context.tenantOptions.find((item) => item.school.id === selected) ?? context.tenantOptions[0];
-  if (!tenant) {
-    const suspended = context.memberships.some((item) => item.status === "suspended");
-    redirect(suspended ? `/pending-approval?status=${ERROR_CODES.MEMBERSHIP_SUSPENDED}` : `/pending-approval?status=${ERROR_CODES.MEMBERSHIP_PENDING}`);
-  }
+  if (!tenant) redirect(accountStatePath(state === "unauthenticated" || state === "active" ? "no_membership" : state));
   return { ...context, ...tenant, role: tenant.membership.role };
 });
 

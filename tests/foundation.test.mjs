@@ -36,7 +36,10 @@ test('redirects reject external, backslash, control and encoded bypasses', () =>
 function callback(auth, membership = { school_id: 'a', status: 'active', role: 'guru' }) {
   return load('src/app/auth/callback/route.ts', {
     '@/utils/supabase/server': { createClient: async () => ({ auth }) },
-    '@/lib/auth': { getActiveMembership: async () => membership },
+    '@/lib/auth': {
+      getAccountState: async () => ({ state: membership ? membership.status === 'active' ? 'active' : membership.status : 'no_membership' }),
+      accountStatePath: (state) => `/pending-approval?status=${state}`,
+    },
     '@/lib/redirect': redirect, '@/lib/recovery': recovery,
   }).GET;
 }
@@ -203,10 +206,11 @@ function formData(values) {
   return data;
 }
 const validRegistration = { full_name: 'Test Person', email: 'test@example.invalid', password: 'test-password', confirmation: 'test-password' };
-function formActions(auth, origin = 'https://school.example') {
+function formActions(auth, origin = 'https://school.example', accountState = 'pending') {
   const logs = [];
   const actions = load('src/app/auth/form-actions.ts', {
     '@/lib/auth-form': authForm,
+    '@/lib/auth': { getAccountState: async () => ({ state: accountState }), accountStatePath: (state) => `/pending-approval?status=${state}` },
     '@/lib/auth-origin': { authOrigin: async () => origin },
     '@/utils/supabase/server': { createClient: async () => ({ auth }) },
     'next/navigation': { redirect: (path) => { throw new Error(`REDIRECT:${path}`); } },
@@ -237,6 +241,18 @@ test('register calls signup through the SSR client with runtime callback and onl
   assert.doesNotMatch(JSON.stringify(state), /test-password/);
   assert.doesNotMatch(JSON.stringify(actions.logs), /test-password|test@example.invalid/);
   assert.equal(actions.logs[1][0], '[auth.register] signup accepted');
+});
+test('immediate-session signup routes through current account state', async () => {
+  const pending = formActions({ signUp: async () => ({ data: { user: { id: 'test' }, session: {} }, error: null }) }, 'https://school.example', 'pending');
+  await assert.rejects(pending.registerAction(authForm.initialAuthState, formData(validRegistration)), /REDIRECT:\/pending-approval\?status=pending/);
+  const active = formActions({ signUp: async () => ({ data: { user: { id: 'test' }, session: {} }, error: null }) }, 'https://school.example', 'active');
+  await assert.rejects(active.registerAction(authForm.initialAuthState, formData(validRegistration)), /REDIRECT:\/dashboard/);
+});
+test('signup without an immediate session remains transitional and does not claim authentication', async () => {
+  const actions = formActions({ signUp: async () => ({ data: { user: { id: 'test' }, session: null }, error: null }) });
+  const state = await actions.registerAction(authForm.initialAuthState, formData(validRegistration));
+  assert.equal(state.success, true);
+  assert.match(state.message, /Jika diminta, selesaikan verifikasi email/);
 });
 test('register error logging removes raw messages and sensitive data', async () => {
   const actions = formActions({ signUp: async () => ({ data: {}, error: { status: 400, code: 'user_already_exists', message: 'private test@example.invalid test-password' } }) });
@@ -559,6 +575,17 @@ test('multi-school selection honors selected membership role instead of first me
   await assert.rejects(fixture.requireCapability('users.manage'), /forbidden/);
 });
 
+test('account state resolves current memberships without relying on first membership', () => {
+  const fixture = tenantFixture([member('a', 'pending')]);
+  const activeTenant = [{ school: schoolRow('a'), membership: member('a') }];
+  assert.equal(fixture.accountStateFromContext(null, [], []), 'unauthenticated');
+  assert.equal(fixture.accountStateFromContext({ id: 'user-a' }, [member('a', 'pending')], []), 'pending');
+  assert.equal(fixture.accountStateFromContext({ id: 'user-a' }, [member('a', 'rejected'), member('b', 'suspended')], []), 'suspended');
+  assert.equal(fixture.accountStateFromContext({ id: 'user-a' }, [member('a', 'pending'), member('b', 'rejected')], []), 'rejected');
+  assert.equal(fixture.accountStateFromContext({ id: 'user-a' }, [member('a', 'pending')], activeTenant), 'active');
+  assert.equal(fixture.accountStateFromContext({ id: 'user-a' }, [], []), 'no_membership');
+});
+
 for (const status of ['pending', 'suspended', 'rejected']) test(`${status} membership alone never grants tenant access`, async () => {
   await assert.rejects(tenantFixture([member('a', status)], 'a').getActiveTenantContext(), /pending-approval/);
 });
@@ -589,12 +616,28 @@ test('capability matrix matches role restrictions and fails closed for inactive/
     assert.equal(has('academic.delete'), ['super_admin', 'kepala_sekolah'].includes(role));
     assert.equal(has('feedback.manage'), ['super_admin', 'kepala_sekolah'].includes(role));
     assert.equal(has('feedback.delete'), role === 'super_admin');
+    assert.equal(has('system.read'), role === 'super_admin');
     assert.equal(has('academic.read'), role !== 'orang_tua');
     assert.equal(has('profile.update_self'), true);
     assert.equal(has('unknown'), false);
     for (const status of ['pending', 'suspended', 'rejected']) assert.equal(capabilities.hasCapability({ membership: { role, status } }, 'dashboard.read'), false);
   }
   assert.equal(capabilities.hasCapability({ membership: { role: 'owner', status: 'active' } }, 'dashboard.read'), false);
+});
+
+test('System page is allowlisted, super-admin-only, and has no execution surface', () => {
+  const systemSource = fs.readFileSync('src/app/dashboard/system/page.tsx', 'utf8');
+  assert.match(systemSource, /requireCapability\("system\.read"\)/);
+  assert.doesNotMatch(systemSource, /Object\.entries\(process\.env\)|SUPABASE_SECRET_KEY|DATABASE_PASSWORD|GOOGLE_CLIENT_SECRET/);
+  assert.equal(fs.existsSync('src/app/api/terminal/route.ts'), false);
+  assert.equal(fs.existsSync('src/app/api/exec/route.ts'), false);
+  assert.equal(capabilities.hasCapability({ membership: { role: 'super_admin', status: 'active' } }, 'system.read'), true);
+  for (const role of ['kepala_sekolah', 'operator', 'guru', 'orang_tua']) assert.equal(capabilities.hasCapability({ membership: { role, status: 'active' } }, 'system.read'), false);
+  for (const status of ['pending', 'rejected', 'suspended']) assert.equal(capabilities.hasCapability({ membership: { role: 'super_admin', status } }, 'system.read'), false);
+  const sourceFiles = fs.readdirSync('src', { recursive: true }).filter((file) => /\.(ts|tsx)$/.test(file));
+  const source = sourceFiles.map((file) => fs.readFileSync(`src/${file}`, 'utf8')).join('\n');
+  assert.doesNotMatch(source, /child_process|spawn\(|exec\(/i);
+  assert.doesNotMatch(source, /localStorage|indexedDB|Cache API/i);
 });
 
 function academicFixture(role = 'guru', ownYear = true) {
@@ -1052,6 +1095,13 @@ test('Google button uses its OAuth server action with pending and duplicate-subm
   assert.match(source, /disabled=\{pending\}/);
 });
 
+test('main login page exposes direct Google signup/login without the registration form', () => {
+  const source = fs.readFileSync('src/app/login/page.tsx', 'utf8');
+  assert.match(source, /<GoogleLogin \/>/);
+  assert.doesNotMatch(source, /RegisterForm|registerAction/);
+  assert.match(source, /href="\/register"/);
+});
+
 test('OAuth callback exchanges exactly once, passes flow ID and never turns next into recovery', async () => {
   let calls = 0;
   const auth = authExchange('SIGNED_IN');
@@ -1063,6 +1113,22 @@ test('OAuth callback exchanges exactly once, passes flow ID and never turns next
   assert.equal(calls, 1);
   assert.equal(response.headers.get('location'), 'https://school.example/dashboard');
   assert.equal(response.cookies.get(recovery.RECOVERY_COOKIE).value, '');
+});
+
+test('OAuth callback routes every account state from the authoritative resolver', async () => {
+  const cases = [
+    ['active', 'https://school.example/dashboard'],
+    ['pending', 'https://school.example/pending-approval?status=pending'],
+    ['rejected', 'https://school.example/pending-approval?status=rejected'],
+    ['suspended', 'https://school.example/pending-approval?status=suspended'],
+    ['no_membership', 'https://school.example/pending-approval?status=no_membership'],
+  ];
+  for (const [status, location] of cases) {
+    const response = await callback(authExchange('SIGNED_IN'), status === 'active' ? { status, role: 'super_admin' } : { status, role: null })(req('code=test&flow=google'));
+    assert.equal(response.headers.get('location'), location);
+  }
+  const source = fs.readFileSync('src/app/auth/callback/route.ts', 'utf8');
+  assert.doesNotMatch(source, /insert\(|signUp|email/);
 });
 
 for (const status of ['pending', 'rejected', 'suspended']) {
@@ -1078,8 +1144,8 @@ for (const status of ['pending', 'rejected', 'suspended']) {
     });
     assert.equal(await auth.getActiveMembership(), null);
     await assert.rejects(auth.getActiveTenantContext(), /pending-approval/);
-    const response = await callback(authExchange('SIGNED_IN'), null)(req('code=test&flow=google&role=super_admin&school_id=foreign'));
-    assert.equal(response.headers.get('location'), 'https://school.example/pending-approval');
+    const response = await callback(authExchange('SIGNED_IN'), { status, role: null })(req('code=test&flow=google&role=super_admin&school_id=foreign'));
+    assert.equal(response.headers.get('location'), `https://school.example/pending-approval?status=${status}`);
   });
 }
 

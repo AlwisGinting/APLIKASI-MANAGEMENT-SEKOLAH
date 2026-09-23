@@ -2,11 +2,13 @@
 
 import { redirect } from "next/navigation";
 import { createClient } from "@/utils/supabase/server";
+import { accountStatePath, getAccountState } from "@/lib/auth";
 import { authOrigin } from "@/lib/auth-origin";
 import { authFailure, field, recoverySent, validateAuthForm, type AuthFormState } from "@/lib/auth-form";
 
 export async function registerAction(_previous: AuthFormState, data: FormData): Promise<AuthFormState> {
   const diagnostic = process.env.NODE_ENV !== "production";
+  let immediateSession = false;
   if (diagnostic) console.info("[auth.register] action invoked");
   const invalid = validateAuthForm("register", data);
   if (invalid) return invalid;
@@ -24,11 +26,18 @@ export async function registerAction(_previous: AuthFormState, data: FormData): 
       return failure;
     }
     if (diagnostic) console.info("[auth.register] signup accepted", { userCreated: Boolean(result.user), sessionCreated: Boolean(result.session) });
-    return { success: true, message: "Permintaan pendaftaran diterima. Periksa email untuk verifikasi, lalu masuk. Akses sekolah menunggu persetujuan administrator." };
+    immediateSession = Boolean(result.session);
   } catch {
     if (diagnostic) console.error("[auth.register]", { code: "service_unavailable" });
     return authFailure("register");
   }
+  if (immediateSession) {
+    const account = await getAccountState();
+    if (account.state === "active") redirect("/dashboard");
+    if (account.state === "unauthenticated") return authFailure("register");
+    redirect(accountStatePath(account.state));
+  }
+  return { success: true, message: "Akun berhasil dibuat. Jika diminta, selesaikan verifikasi email lalu masuk. Akses sekolah tetap menunggu persetujuan administrator." };
 }
 
 export async function loginAction(_previous: AuthFormState, data: FormData): Promise<AuthFormState> {

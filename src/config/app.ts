@@ -17,6 +17,7 @@ export const APP_CONFIG = {
     about: "/dashboard/about",
     activity: "/dashboard/activity",
     notifications: "/dashboard/notifications",
+    system: "/dashboard/system",
     privacy: "/privacy",
     terms: "/terms",
   },

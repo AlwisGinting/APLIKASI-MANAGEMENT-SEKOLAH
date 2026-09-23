@@ -2,6 +2,14 @@
 
 Review date: 2026-09-24. Local source implementation only; no provider configuration, credentials, SQL, migration, commit, push or deploy. Email/password remains available. Google Login and Stage C Google Drive integration are separate consent flows with separate purposes.
 
+## Registration with auto-confirm
+
+To allow password registrations to receive an immediate Auth session, the owner must change this setting manually in Supabase Dashboard: **Authentication → Providers → Email → Confirm email**, then turn **Confirm email** off and save. Do not change it automatically from this repository.
+
+With confirmation disabled, Supabase may return a session immediately. The application still evaluates current database membership before routing: a new account remains `pending` with `role = NULL` and goes to the pending-approval page. It is never auto-approved and receives no tenant data. If Supabase returns no session, the application shows transitional confirmation guidance and does not claim that the browser is authenticated.
+
+Disabling email confirmation means a password registration does not prove ownership through an email verification link. It may make the Auth account usable immediately, but administrator approval remains mandatory before school access. The owner should weigh this tradeoff against the school’s registration process and use controlled test accounts before changing production settings.
+
 ## Recovery incident: evidence and fix
 
 Owner reports production recovery email delivery followed by GET /auth/v1/verify 303 and POST /auth/v1/token 422, then an expired-link message. SMTP previously used a Gmail password and was corrected toward an App Password by the owner. No SMTP secrets/configuration or production Auth logs were inspected here. A 422 alone does not establish expiry or a unique root cause.

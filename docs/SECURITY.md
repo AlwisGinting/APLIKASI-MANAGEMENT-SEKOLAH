@@ -84,6 +84,7 @@ Semua capability mensyaratkan membership active dan role dikenal. Role/cookie br
 | dashboard.read, profile.read/update_self, school.read | Ya | Ya | Ya | Ya | Ya |
 | feedback.create/read_own, activity.read, notifications.read | Ya | Ya | Ya | Ya | Ya |
 | school.update, users.read/manage, feedback.manage | Ya | Ya | Tidak | Tidak | Tidak |
+| system.read | Ya | Tidak | Tidak | Tidak | Tidak |
 | academic.read | Ya | Ya | Ya | Ya | Tidak |
 | academic.manage | Ya | Ya | Ya | Tidak | Tidak |
 | academic.delete | Ya | Ya | Tidak | Tidak | Tidak |
