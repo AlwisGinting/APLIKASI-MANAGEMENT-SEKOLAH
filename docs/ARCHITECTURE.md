@@ -1,4 +1,4 @@
-> **Current status — 2026-09-24:** Owner confirms migrations 001–007 applied in production and immutable. Do not edit or rerun them. Statements below saying 007 (or earlier migrations) is draft/unapplied describe historical work, not current deployment instructions. See [current readiness audit](READINESS-2026-09-24.md) and [Stage C Storage/backup design](STORAGE.md). Live RLS and authenticated smoke testing remain manual gates. No 008, Storage hardening deployment, Drive connection or backup automation was performed in this review.
+> **Current F1 status — 2026-09-27:** Migrations 001–007 are APPLIED and IMMUTABLE per owner. Migration 008 is DRAFT / NOT APPLIED. See [008 security contract](SECURITY-008.md) for proposed enforcement, conservative read-only avatar access, release gates and deferred work. Historical test/deployment counts below are not current validation results.
 
 # Arsitektur
 
@@ -54,7 +54,7 @@ React `cache` hanya deduplikasi render/request: auth, membership, sekolah, dan p
 
 Authorization terpusat di `src/lib/capabilities.ts` dan `requireCapability()` pada server. Adapter helper lama mengarah ke context yang sama. UI existing dipertahankan; shell hanya menambah pemilih sekolah untuk multi-membership dan label periode. Auth Admin API hanya dipakai halaman admin pengguna untuk lookup email ID hasil query membership tenant, dalam batch maksimal 10 tanpa enumerasi seluruh akun project.
 
-## Tahap B — transactional audit foundation (007 belum applied)
+## Transactional audit foundation (007 applied and immutable)
 
 Sumber mutation → guards/RLS existing → AFTER ROW `capture_foundation_audit()` → audit_logs dalam transaksi yang sama. Audit insert gagal berarti mutation rollback; tidak ada fire-and-forget writer atau catch yang mengabaikan kegagalan. Server Actions existing tidak menambah audit insert terpisah. Tahap A context, capability, auth, dan business mutations dipertahankan.
 

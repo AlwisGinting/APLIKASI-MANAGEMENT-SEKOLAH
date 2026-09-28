@@ -1,3 +1,5 @@
+> **Current F1 status — 2026-09-27:** Migrations 001–007 are APPLIED and IMMUTABLE per owner. Migration 008 is DRAFT / NOT APPLIED. See [008 security contract](SECURITY-008.md) for proposed enforcement, conservative read-only avatar access, release gates and deferred work. Historical test/deployment counts below are not current validation results.
+
 # Authentication foundation — recovery and Google login
 
 Review date: 2026-09-24. Local source implementation only; no provider configuration, credentials, SQL, migration, commit, push or deploy. Email/password remains available. Google Login and Stage C Google Drive integration are separate consent flows with separate purposes.

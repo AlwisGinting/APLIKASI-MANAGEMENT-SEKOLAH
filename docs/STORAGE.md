@@ -1,3 +1,5 @@
+> **Current F1 status — 2026-09-27:** Migrations 001–007 are APPLIED and IMMUTABLE per owner. Migration 008 is DRAFT / NOT APPLIED. See [008 security contract](SECURITY-008.md) for proposed enforcement, conservative read-only avatar access, release gates and deferred work. Historical test/deployment counts below are not current validation results.
+
 # Stage C — Storage hardening and backup/export design
 
 Prepared 2026-09-24. Design only: no Storage policy/migration, upload module, metadata table, Drive OAuth integration or backup automation has been deployed. See [readiness audit](READINESS-2026-09-24.md). Migrations 001–007 are applied per owner and immutable.

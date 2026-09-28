@@ -17,6 +17,6 @@ export default async function DashboardLayout({ children }: Readonly<{ children:
       {context.tenantOptions.length > 1 && <form action={switchSchool} className="mb-3 flex flex-wrap items-center gap-3"><label htmlFor="active-school" className="text-sm font-medium">Sekolah aktif</label><select id="active-school" name="school_id" defaultValue={context.school.id} className="field w-auto">{context.tenantOptions.map(({ school }) => <option key={school.id} value={school.id}>{school.name}</option>)}</select><button type="submit" className="primary-button">Ganti sekolah</button></form>}
       <p className="muted text-sm">{context.school.name}{hasCapability(context, "academic.read") && <> · {context.academicYear?.name ?? "Belum ada tahun ajaran aktif"} · {context.semester?.name ?? "Belum ada semester aktif"}</>}</p>
     </div>
-    <div id="dashboard-content" tabIndex={-1} className="pb-24">{children}</div><FeedbackButton />
+    <div id="dashboard-content" tabIndex={-1} className="pb-24">{children}</div>{hasCapability(context, "feedback.create") && <FeedbackButton />}
   </div>;
 }

@@ -1,4 +1,4 @@
-> **Current status — 2026-09-24:** Owner confirms migrations 001–007 applied in production and immutable. Do not edit or rerun them. Statements below saying 007 (or earlier migrations) is draft/unapplied describe historical work, not current deployment instructions. See [current readiness audit](READINESS-2026-09-24.md) and [Stage C Storage/backup design](STORAGE.md). Live RLS and authenticated smoke testing remain manual gates. No 008, Storage hardening deployment, Drive connection or backup automation was performed in this review.
+> **Current F1 status — 2026-09-27:** Migrations 001–007 are APPLIED and IMMUTABLE per owner. Migration 008 is DRAFT / NOT APPLIED. See [008 security contract](SECURITY-008.md) for proposed enforcement, conservative read-only avatar access, release gates and deferred work. Historical test/deployment counts below are not current validation results.
 
 # Database
 
@@ -45,7 +45,7 @@ Migration 001–006 sudah applied menurut konfirmasi pemilik dan tidak diedit pa
 
 ## Core Foundation V2 — Tahap B: conventions dan audit (draft 007)
 
-Migration `202609160007_audit_data_integrity.sql` dibuat untuk review manual, **belum dijalankan**. Migration 001–006 tetap applied/immutable menurut konfirmasi pemilik; fingerprint tahap B disimpan di `tests/fixtures/applied-migrations-001-006.json`. Tidak ada migration 008 atau tabel bisnis baru selain audit_logs. Draft memakai transaksi dan sengaja gagal jika nama tabel/function sudah ada, agar schema tak dikenal tidak ditimpa diam-diam.
+Migration `202609160007_audit_data_integrity.sql` sudah APPLIED dan IMMUTABLE menurut owner. Fingerprint baseline 001–007 disimpan di `tests/fixtures/applied-migrations-001-007.json`. Draft 008 kini tersedia untuk review, belum dijalankan. File 007 tetap dipertahankan byte-for-byte; komentar draft di dalamnya adalah riwayat dan bukan status deployment saat ini.
 
 ### Baseline tabel bisnis berikutnya
 

@@ -26,7 +26,7 @@ export type Membership = {
   updated_at: string;
 };
 
-export type AccountState = "unauthenticated" | "active" | "pending" | "rejected" | "suspended" | "no_membership";
+export type AccountState = "unauthenticated" | "active" | "basic" | "pending" | "rejected" | "suspended" | "no_membership";
 
 // React cache deduplicates only within a server render, never across users.
 export const getAuthContext = cache(async function getAuthContext() {
@@ -61,7 +61,7 @@ export type TenantSchool = {
 
 export const getTenantOptions = cache(async () => {
   const context = await requireUser();
-  const memberships = context.memberships.filter((item) => item.user_id === context.user.id && item.status === "active" && item.role !== null && APP_ROLES.includes(item.role));
+  const memberships = context.memberships.filter((item) => item.user_id === context.user.id && item.status === "active" && (item.role === null || APP_ROLES.includes(item.role)));
   if (!memberships.length) return { ...context, tenantOptions: [] };
   const { data, error } = await context.supabase.from("schools")
     .select("id, name, slug, is_active, created_at, updated_at, address, phone, email, principal_name, npsn, description, vision, mission, logo_path")
@@ -81,14 +81,14 @@ export function accountStateFromContext(
   tenantOptions: Array<{ school: TenantSchool; membership: Membership }>,
 ): AccountState {
   if (!user) return "unauthenticated";
-  if (tenantOptions.length) return "active";
+  if (tenantOptions.length) return tenantOptions.some(({ membership }) => membership.role !== null) ? "active" : "basic";
   if (memberships.some((membership) => membership.status === "suspended")) return "suspended";
   if (memberships.some((membership) => membership.status === "rejected")) return "rejected";
   if (memberships.some((membership) => membership.status === "pending")) return "pending";
   return "no_membership";
 }
 
-export function accountStatePath(state: Exclude<AccountState, "unauthenticated" | "active">) {
+export function accountStatePath(state: Exclude<AccountState, "unauthenticated" | "active" | "basic">) {
   return `/pending-approval?status=${state}`;
 }
 
@@ -103,7 +103,7 @@ export const getActiveTenantContext = cache(async () => {
   const selected = (await cookies()).get(ACTIVE_SCHOOL_COOKIE)?.value;
   // Deterministic fallback is only used for absent/stale preferences; a valid selection wins.
   const tenant = context.tenantOptions.find((item) => item.school.id === selected) ?? context.tenantOptions[0];
-  if (!tenant) redirect(accountStatePath(state === "unauthenticated" || state === "active" ? "no_membership" : state));
+  if (!tenant) redirect(accountStatePath(state === "unauthenticated" || state === "active" || state === "basic" ? "no_membership" : state));
   return { ...context, ...tenant, role: tenant.membership.role };
 });
 

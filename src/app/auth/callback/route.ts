@@ -17,13 +17,13 @@ export async function GET(request: NextRequest) {
     response.cookies.set(RECOVERY_COOKIE, "", { path: "/", maxAge: 0 });
     return response;
   }
-  function failure(reason = "recovery-service") {
-    return go(recoveryRequested ? `/reset-password?error=${reason}` : google ? "/login?error=oauth" : "/login?error=verification");
+  function failure(reason = "recovery-service", providerFailure = false) {
+    return go(recoveryRequested ? `/reset-password?error=${reason}` : google && providerFailure ? "/login?error=oauth" : "/login?error=verification");
   }
   const code = params.get("code");
-  if (params.has("error") || params.has("error_code")) return failure(recoveryFailure({ code: params.get("error_code") ?? undefined }));
+  if (params.has("error") || params.has("error_code")) return failure(recoveryFailure({ code: params.get("error_code") ?? undefined }), true);
   // A missing code can also be a provider error returned only in a URL fragment.
-  if (!code) return failure();
+  if (!code) return failure("recovery-service", true);
   if (params.getAll("code").length !== 1) return failure("recovery-invalid");
   const flowId = params.get("sb_flow_id");
   // A malformed explicit ID must never fall back to another flow's verifier.
@@ -50,6 +50,7 @@ export async function GET(request: NextRequest) {
     }
     if (recoveryRequested) return failure("recovery-invalid");
     const account = await getAccountState();
+    if (account.state === "basic") return go("/dashboard");
     if (account.state === "active") return go(nextPath);
     if (account.state === "unauthenticated") return go("/login?error=verification");
     return go(accountStatePath(account.state));

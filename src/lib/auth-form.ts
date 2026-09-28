@@ -29,8 +29,8 @@ export function validateAuthForm(mode: AuthMode, data: FormData): AuthFormState 
 export function authFailure(mode: AuthMode, error?: { status?: number; code?: string } | null): AuthFormState {
   let message = unavailable;
   if (error?.status && error.status < 500) {
-    if (mode === "login") message = "Belum dapat masuk. Periksa email dan kata sandi, serta pastikan verifikasi email sudah selesai.";
-    else if (error.status === 429) message = "Terlalu banyak percobaan. Silakan tunggu beberapa saat sebelum mencoba kembali.";
+    if (error.status === 429) message = "Terlalu banyak percobaan. Silakan tunggu beberapa saat sebelum mencoba kembali.";
+    else if (mode === "login") message = error.code === "invalid_credentials" ? "Email atau kata sandi tidak sesuai." : error.code === "email_not_confirmed" ? "Selesaikan verifikasi email sebelum masuk." : "Belum dapat masuk. Silakan coba kembali.";
     else if (mode === "register") message = "Pendaftaran belum dapat diproses. Periksa isian atau coba masuk jika Anda pernah mendaftar.";
     else if (mode === "reset") message = "Kata sandi belum dapat diperbarui. Gunakan kata sandi lain atau minta tautan pemulihan baru.";
   }

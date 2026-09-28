@@ -37,7 +37,7 @@ export function Navigation({ name, school, role }: { name: string; school: strin
         </dialog>
         <p className="muted hidden truncate text-sm lg:block">Ruang kerja sekolah</p>
         <details ref={userMenu} className="relative ml-auto min-w-0" onKeyDown={(event) => { if (event.key === "Escape" && userMenu.current) { userMenu.current.open = false; userMenu.current.querySelector("summary")?.focus(); } }}>
-          <summary className="flex cursor-pointer list-none items-center gap-3 rounded-xl p-1"><Avatar name={name} /><span className="min-w-0"><span className="block max-w-40 truncate text-sm font-semibold sm:max-w-64">{name}</span><span className="muted block text-xs">{role ? roleLabels[role] : "Anggota"}</span></span><span aria-hidden="true">⌄</span></summary>
+          <summary className="flex cursor-pointer list-none items-center gap-3 rounded-xl p-1"><Avatar name={name} /><span className="min-w-0"><span className="block max-w-40 truncate text-sm font-semibold sm:max-w-64">{name}</span><span className="muted block text-xs">{role ? roleLabels[role] : "Akses Dasar"}</span></span><span aria-hidden="true">⌄</span></summary>
           <div className="surface absolute right-0 top-full mt-3 w-56 rounded-2xl border p-2 shadow-xl">{[[R.profile, "Profil"], [R.settings, "Pengaturan"], [R.help, "Bantuan"]].map(([href, label]) => <Link onClick={() => { if (userMenu.current) userMenu.current.open = false; }} key={href} href={href} className="nav-link block rounded-lg px-4 py-3 text-sm">{label}</Link>)}<form action={logoutSession}><button className="nav-link w-full rounded-lg px-4 py-3 text-left text-sm" type="submit">Logout perangkat ini</button></form></div>
         </details>
       </div>

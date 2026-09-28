@@ -36,15 +36,13 @@ export async function saveSchool(_previous: SettingsState, data: FormData): Prom
 export async function changePassword(_previous: SettingsState, data: FormData): Promise<SettingsState> {
   const context = await requireCapability("profile.update_self");
   const password = data.get("password");
-  const current = data.get("current_password");
   const confirmation = data.get("confirmation");
   const fieldErrors: Record<string, string> = {};
-  if (typeof current !== "string" || !current) fieldErrors.current_password = "Kata sandi saat ini wajib diisi.";
   if (typeof password !== "string" || password.length < 8) fieldErrors.password = "Kata sandi baru minimal 8 karakter.";
   if (password !== confirmation) fieldErrors.confirmation = "Konfirmasi kata sandi tidak sama.";
   if (Object.keys(fieldErrors).length) return { success: false, message: "Periksa kata sandi Anda.", fieldErrors };
-  const { error } = await context.supabase.auth.updateUser({ password: password as string, current_password: current as string });
-  if (error) return { success: false, message: "Kata sandi belum dapat diperbarui. Periksa kata sandi saat ini, gunakan kata sandi baru yang kuat, atau gunakan pemulihan akun." };
+  const { error } = await context.supabase.auth.updateUser({ password: password as string });
+  if (error) return { success: false, message: "Kata sandi belum dapat diperbarui. Gunakan kata sandi yang kuat. Jika perlu verifikasi ulang, masuk kembali atau gunakan pemulihan akun." };
   (await cookies()).delete(RECOVERY_COOKIE);
   return { success: true, message: "Kata sandi berhasil diperbarui. Anda dapat keluar dari semua sesi di bawah jika diperlukan." };
 }

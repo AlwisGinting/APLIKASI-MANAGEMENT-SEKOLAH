@@ -33,7 +33,7 @@ export async function registerAction(_previous: AuthFormState, data: FormData): 
   }
   if (immediateSession) {
     const account = await getAccountState();
-    if (account.state === "active") redirect("/dashboard");
+    if (account.state === "active" || account.state === "basic") redirect("/dashboard");
     if (account.state === "unauthenticated") return authFailure("register");
     redirect(accountStatePath(account.state));
   }

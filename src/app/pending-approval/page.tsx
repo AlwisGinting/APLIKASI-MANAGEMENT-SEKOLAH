@@ -28,7 +28,7 @@ const stateCopy = {
 
 export default async function PendingApprovalPage() {
   const { user, profile, state } = await getAccountState();
-  if (state === "active") redirect("/dashboard");
+  if (state === "active" || state === "basic") redirect("/dashboard");
   const copy = stateCopy[state === "unauthenticated" ? "no_membership" : state];
 
   return <main className="min-h-screen bg-[#f6f8f5] px-6 py-10 sm:px-10">

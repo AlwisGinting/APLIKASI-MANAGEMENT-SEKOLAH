@@ -1,5 +1,6 @@
 import { USER_MESSAGES } from "@/lib/errors";
 import { requireCapability, APP_ROLES } from "@/lib/auth";
+import { hasCapability } from "@/lib/capabilities";
 import { updateMembership } from "@/app/auth/actions";
 import { getAuthEmails } from "@/utils/supabase/admin";
 
@@ -13,12 +14,16 @@ const errorMessages: Record<string, string> = {
   update: "Perubahan belum berhasil. Coba lagi.",
   "not-found": "Membership tidak ditemukan di sekolah ini.",
   self: "Anda tidak dapat mengubah membership sendiri.",
+  "super-admin-only": "Perubahan membership Super Admin hanya dapat dilakukan Super Admin aktif sekolah ini.",
+  "concurrent-change": "Akses berubah saat diproses. Muat ulang dan periksa kembali sebelum mencoba.",
   "last-super-admin": "Super Admin aktif terakhir tidak dapat dinonaktifkan atau diturunkan rolenya.",
 };
 
 export default async function UsersPage({ searchParams }: Props) {
   const context = await requireCapability("users.read");
   const params = await searchParams;
+  const canManageSuperAdmins = hasCapability(context, "users.manage_super_admin");
+  const assignableRoles = APP_ROLES.filter((role) => role !== "super_admin" || canManageSuperAdmins);
   const { data: memberships, error: membershipsError } = await context.supabase
     .from("school_memberships")
     .select("id, user_id, role, status, created_at")
@@ -54,11 +59,13 @@ export default async function UsersPage({ searchParams }: Props) {
           {(memberships ?? []).length === 0 ? <p className="p-6 text-sm text-[#60736e]">Belum ada pengguna terdaftar.</p> : <div className="divide-y divide-[#e6eee9]">
             {(memberships ?? []).map((membership) => {
               const isSelf = membership.user_id === context.user.id;
-              const canApprove = !isSelf && ["pending", "rejected", "suspended"].includes(membership.status);
-              const canReject = !isSelf && membership.status === "pending";
-              const canSuspend = !isSelf && membership.status === "active";
-              const canChangeRole = !isSelf && membership.status === "active";
-              return <form action={updateMembership} key={membership.id} className="grid gap-4 px-5 py-5 md:grid-cols-[1.2fr_1.3fr_1fr_1fr_2fr] md:items-center"><input type="hidden" name="membership_id" value={membership.id} /><div><p className="font-semibold text-[#18312c]">{profileMap.get(membership.user_id) ?? "Nama belum tersedia"}</p><p className="mt-1 break-all text-xs text-[#60736e] md:hidden">{emailMap.get(membership.user_id) ?? (emailLookupFailed ? "Email belum tersedia" : "Tidak tersedia")}</p>{isSelf && <p className="mt-1 text-xs font-semibold text-[#2f7162]">Akun Anda</p>}</div><p className="hidden break-all text-sm text-[#60736e] md:block">{emailMap.get(membership.user_id) ?? (emailLookupFailed ? "Email belum tersedia" : "Tidak tersedia")}</p><p className="text-sm capitalize text-[#60736e]">Status: <span className="font-semibold text-[#20584c]">{membership.status}</span></p><select name="role" defaultValue={membership.role ?? "guru"} disabled={isSelf} aria-label={`Role ${profileMap.get(membership.user_id) ?? "pengguna"}`} className="rounded-lg border border-[#cbdcd3] px-3 py-2 text-sm capitalize text-[#18312c] disabled:cursor-not-allowed disabled:bg-[#f1f4f2]">{APP_ROLES.map((role) => <option key={role} value={role}>{role.replaceAll("_", " ")}</option>)}</select><div className="flex flex-wrap gap-2">{(canApprove || canChangeRole) && <button name="status" value="active" type="submit" className="rounded-lg bg-[#20584c] px-3 py-2 text-xs font-semibold text-white">{canChangeRole ? "Simpan role" : "Aktifkan"}</button>}{canReject && <button name="status" value="rejected" type="submit" className="rounded-lg border border-[#f0c8ba] px-3 py-2 text-xs font-semibold text-[#b85e43]">Tolak</button>}{canSuspend && <button name="status" value="suspended" type="submit" className="rounded-lg border border-[#cbdcd3] px-3 py-2 text-xs font-semibold text-[#60736e]">Suspend</button>}{isSelf && <span className="text-xs text-[#60736e]">Aksi akun sendiri dinonaktifkan.</span>}{!isSelf && !canApprove && !canReject && !canSuspend && !canChangeRole && <span className="text-xs text-[#60736e]">Tidak ada aksi tersedia.</span>}</div></form>;
+              const canEdit = hasCapability(context, "users.manage") && (!isSelf || (canManageSuperAdmins && membership.role === "super_admin"))
+                && (membership.role !== "super_admin" || canManageSuperAdmins);
+              const canApprove = canEdit && ["pending", "rejected", "suspended"].includes(membership.status);
+              const canReject = canEdit && membership.status === "pending";
+              const canSuspend = canEdit && membership.status === "active";
+              const canChangeRole = canEdit && membership.status === "active";
+              return <form action={updateMembership} key={membership.id} className="grid gap-4 px-5 py-5 md:grid-cols-[1.2fr_1.3fr_1fr_1fr_2fr] md:items-center"><input type="hidden" name="membership_id" value={membership.id} /><div><p className="font-semibold text-[#18312c]">{profileMap.get(membership.user_id) ?? "Nama belum tersedia"}</p><p className="mt-1 break-all text-xs text-[#60736e] md:hidden">{emailMap.get(membership.user_id) ?? (emailLookupFailed ? "Email belum tersedia" : "Tidak tersedia")}</p>{isSelf && <p className="mt-1 text-xs font-semibold text-[#2f7162]">Akun Anda</p>}</div><p className="hidden break-all text-sm text-[#60736e] md:block">{emailMap.get(membership.user_id) ?? (emailLookupFailed ? "Email belum tersedia" : "Tidak tersedia")}</p><p className="text-sm capitalize text-[#60736e]">Status: <span className="font-semibold text-[#20584c]">{membership.status}</span></p>{!canEdit ? <span className="text-sm capitalize">{membership.role?.replaceAll("_", " ") ?? (membership.status === "active" ? "Akses Dasar" : "Belum ada role")}</span> : <select name="role" defaultValue={membership.role ?? ""} aria-label={`Role ${profileMap.get(membership.user_id) ?? "pengguna"}`} className="rounded-lg border border-[#cbdcd3] px-3 py-2 text-sm capitalize text-[#18312c] disabled:cursor-not-allowed disabled:bg-[#f1f4f2]"><option value="">{membership.status === "active" ? "Akses Dasar" : "Belum ada role"}</option>{assignableRoles.map((role) => <option key={role} value={role}>{role.replaceAll("_", " ")}</option>)}</select>}<div className="flex flex-wrap gap-2">{(canApprove || canChangeRole) && <button name="status" value="active" type="submit" className="rounded-lg bg-[#20584c] px-3 py-2 text-xs font-semibold text-white">{canChangeRole ? "Simpan role" : "Aktifkan"}</button>}{canReject && <button name="status" value="rejected" type="submit" className="rounded-lg border border-[#f0c8ba] px-3 py-2 text-xs font-semibold text-[#b85e43]">Tolak</button>}{canSuspend && <button name="status" value="suspended" type="submit" className="rounded-lg border border-[#cbdcd3] px-3 py-2 text-xs font-semibold text-[#60736e]">Suspend</button>}{!canEdit && <span className="text-xs text-[#60736e]">{membership.role === "super_admin" && !canManageSuperAdmins ? "Dikelola Super Admin sekolah." : "Aksi akun sendiri dinonaktifkan."}</span>}{canEdit && !canApprove && !canReject && !canSuspend && !canChangeRole && <span className="text-xs text-[#60736e]">Tidak ada aksi tersedia.</span>}</div></form>;
             })}
           </div>}
         </div>

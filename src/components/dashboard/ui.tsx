@@ -16,7 +16,7 @@ export function Avatar({ name }: { name: string }) {
 }
 export function TenantContext({ school, role, status }: { school: string; role: AppRole | null; status: string }) {
 
-  return <dl className="grid gap-5 sm:grid-cols-3"><Info label="Sekolah aktif" value={school} /><Info label="Role" value={role ? roleLabels[role] : "Belum diisi"} /><Info label="Status membership" value={membershipLabels[status] ?? "Belum tersedia"} /></dl>;
+  return <dl className="grid gap-5 sm:grid-cols-3"><Info label="Sekolah aktif" value={school} /><Info label="Role" value={role ? roleLabels[role] : status === "active" ? "Akses Dasar" : "Belum diisi"} /><Info label="Status membership" value={membershipLabels[status] ?? "Belum tersedia"} /></dl>;
 }
 export function QuickLink({ href, title, description }: { href: string; title: string; description: string }) {
   return <Link href={href} className="surface block rounded-2xl border p-5 transition hover:border-[#2f7162]"><h2 className="font-semibold">{title} <span aria-hidden="true">→</span></h2><p className="muted mt-2 text-sm leading-6">{description}</p></Link>;

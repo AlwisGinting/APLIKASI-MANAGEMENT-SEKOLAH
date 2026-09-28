@@ -37,7 +37,7 @@ function callback(auth, membership = { school_id: 'a', status: 'active', role: '
   return load('src/app/auth/callback/route.ts', {
     '@/utils/supabase/server': { createClient: async () => ({ auth }) },
     '@/lib/auth': {
-      getAccountState: async () => ({ state: membership ? membership.status === 'active' ? 'active' : membership.status : 'no_membership' }),
+      getAccountState: async () => ({ state: membership ? membership.status === 'active' ? membership.role === null ? 'basic' : 'active' : membership.status : 'no_membership' }),
       accountStatePath: (state) => `/pending-approval?status=${state}`,
     },
     '@/lib/redirect': redirect, '@/lib/recovery': recovery,
@@ -260,13 +260,16 @@ test('register error logging removes raw messages and sensitive data', async () 
   assert.equal(state.success, false);
   assert.doesNotMatch(JSON.stringify([state, actions.logs]), /private|test@example.invalid|test-password/);
 });
-test('login errors for wrong credentials and unverified accounts are indistinguishable', async () => {
+test('login errors distinguish Auth-confirmed causes without internal details', async () => {
   const messages = [];
   for (const code of ['invalid_credentials', 'email_not_confirmed', 'user_not_found']) {
     const actions = formActions({ signInWithPassword: async () => ({ error: { status: 400, code } }) });
     messages.push((await actions.loginAction(authForm.initialAuthState, formData(validRegistration))).message);
   }
-  assert.equal(new Set(messages).size, 1);
+  assert.equal(new Set(messages).size, 3);
+  assert.doesNotMatch(messages[0], /verifikasi/);
+  assert.match(messages[1], /verifikasi email/);
+  assert.doesNotMatch(messages[2], /verifikasi|user_not_found/);
 });
 test('login success redirects after session setup without swallowing redirect', async () => {
   const actions = formActions({ signInWithPassword: async () => ({ error: null }) });
@@ -359,7 +362,7 @@ test('school editing fails safely without details and validates supplied metadat
   const invalid = settings.schoolInput(formData({ name: '', npsn: 'abc', email: 'not-email', address: 'x'.repeat(1001) }));
   assert.ok(invalid.fieldErrors.name && invalid.fieldErrors.npsn && invalid.fieldErrors.email && invalid.fieldErrors.address);
 });
-test('password change validates confirmation and sends current password only to normal Auth', async () => {
+test('password settings validate confirmation and need no existing password', async () => {
   const fixture = settingsFixture();
   const invalid = await fixture.changePassword(settings.settingsInitial, formData({ current_password: 'old-pass', password: 'short', confirmation: 'different' }));
   assert.equal(invalid.success, false);
@@ -367,7 +370,7 @@ test('password change validates confirmation and sends current password only to 
   const result = await fixture.changePassword(settings.settingsInitial, formData({ current_password: 'old-pass', password: 'new-password', confirmation: 'new-password', user_id: 'other' }));
   assert.equal(result.success, true);
   assert.equal(fixture.calls[0][0], 'updateUser');
-  assert.equal(fixture.calls[0][1].current_password, 'old-pass');
+  assert.equal(fixture.calls[0][1].current_password, undefined);
   assert.equal(fixture.calls[0][1].user_id, undefined);
   assert.doesNotMatch(JSON.stringify(result), /new-password|old-pass/);
 });
@@ -611,7 +614,8 @@ test('capability matrix matches role restrictions and fails closed for inactive/
     const context = { membership: { role, status: 'active' } };
     const has = (cap) => capabilities.hasCapability(context, cap);
     assert.equal(has('school.update'), ['super_admin', 'kepala_sekolah'].includes(role));
-    assert.equal(has('users.manage'), ['super_admin', 'kepala_sekolah'].includes(role));
+    assert.equal(has('users.manage'), role === 'super_admin');
+    assert.equal(has('users.manage_super_admin'), role === 'super_admin');
     assert.equal(has('academic.manage'), ['super_admin', 'kepala_sekolah', 'operator'].includes(role));
     assert.equal(has('academic.delete'), ['super_admin', 'kepala_sekolah'].includes(role));
     assert.equal(has('feedback.manage'), ['super_admin', 'kepala_sekolah'].includes(role));
@@ -868,13 +872,13 @@ test('007 static security: audit coverage coexists with existing triggers and st
   assert.match(auditSql, /commit;\s*$/);
 });
 
-test('applied migrations 001–006 match the immutable pre-stage-B checksum manifest', () => {
+test('applied migrations 001–007 match the immutable db35aac checksum manifest', () => {
   const { createHash } = loadDependency('node:crypto');
-  const checksums = JSON.parse(fs.readFileSync('tests/fixtures/applied-migrations-001-006.json', 'utf8'));
-  assert.equal(Object.keys(checksums).length, 6);
+  const checksums = JSON.parse(fs.readFileSync('tests/fixtures/applied-migrations-001-007.json', 'utf8'));
+  assert.equal(Object.keys(checksums).length, 7);
   // Compare canonical LF content; Git core.autocrlf may materialize CRLF on Windows.
   for (const [path, expected] of Object.entries(checksums)) assert.equal(createHash('sha256').update(fs.readFileSync(path, 'utf8').replace(/\r\n/g, '\n')).digest('hex'), expected, path);
-  assert.equal(fs.readdirSync('supabase/migrations').some((file) => /^\d{8}0008_/.test(file)), false);
+  assert.match(fs.readFileSync('supabase/migrations/202609270008_security_storage_hardening.sql', 'utf8'), /DRAFT.*NOT APPLIED/);
 });
 
 test('007 rejects identity rewrites and revokes application TRUNCATE without restricting maintenance', () => {
@@ -1262,7 +1266,7 @@ test('server client enables SDK flow IDs and treats writable cookie failures as 
   assert.doesNotThrow(() => options.cookies.setAll([{ name: 'test', value: 'test', options: {} }]));
 });
 
-test('new Google auth users inherit only the existing pending membership trigger contract', () => {
+test('immutable 002 historical admission remains pending until forward migration 009', () => {
   const sql = fs.readFileSync('supabase/migrations/202609100002_auth_membership_security.sql', 'utf8');
   const trigger = sql.split('create or replace function public.handle_new_user()')[1].split('drop trigger')[0];
   assert.match(trigger, /values \(default_school_id, new.id, 'pending', null\)/);
@@ -1279,4 +1283,320 @@ test('framework headers preserve no-referrer for callback and legacy reset URLs'
     const values = matching.flatMap((rule) => rule.headers.filter((header) => header.key === 'Referrer-Policy'));
     assert.equal(values.at(-1).value, 'no-referrer');
   }
+});
+
+
+// 008 tests are unit/static contracts, NOT execution of the draft migration.
+const security008 = fs.readFileSync('supabase/migrations/202609270008_security_storage_hardening.sql', 'utf8');
+function membershipSecurityFixture({ actorRole = 'super_admin', targetRole = 'operator', targetStatus = 'active', count = 2, dbCode = null, self = false, foreign = false } = {}) {
+  const writes = [];
+  const filters = [];
+  const context = {
+    user: { id: 'actor' }, membership: { role: actorRole, status: 'active', school_id: 'a' },
+    supabase: { from() {
+      let operation = 'read'; let head = false;
+      const query = {
+        select(_columns, options) { head = options?.head ?? false; return query; },
+        eq(key, value) { filters.push([key, value]); return query; },
+        update(payload) { operation = 'update'; writes.push(payload); return query; },
+        async maybeSingle() {
+          if (operation === 'update') return { data: dbCode ? null : { id: 'target' }, error: dbCode ? { code: dbCode, message: 'PRIVATE DATABASE DETAIL' } : null };
+          return { data: foreign ? null : { id: 'target', user_id: self ? 'actor' : 'target-user', role: targetRole, status: targetStatus }, error: null };
+        },
+        then(resolve, reject) { return Promise.resolve(head ? { count, error: null } : {}).then(resolve, reject); },
+      };
+      return query;
+    } },
+  };
+  const actions = load('src/app/auth/actions.ts', {
+    '@/lib/auth': { ...appConfig, APP_ROLES: appConfig.AUTH_ROLES, requireCapability: async (cap) => { if (!capabilities.hasCapability(context, cap)) throw Error('FORBIDDEN'); return context; } },
+    '@/lib/capabilities': capabilities, '@/utils/supabase/server': {}, '@/lib/recovery': recovery,
+    '@/lib/errors': errors, 'next/headers': {}, 'next/cache': { revalidatePath() {} },
+    'next/navigation': { redirect(path) { throw Error('REDIRECT:' + path); } },
+  });
+  return { ...actions, writes, filters };
+}
+const membershipForm = (role, status = 'active') => formData({ membership_id: 'target', role, status });
+
+test('008 kepala cannot grant SA, reactivate SA, demote SA or suspend SA through the action', async () => {
+  for (const [targetRole, targetStatus, role, status] of [
+    ['operator', 'active', 'super_admin', 'active'],
+    ['super_admin', 'suspended', 'super_admin', 'active'],
+    ['super_admin', 'active', 'kepala_sekolah', 'active'],
+    ['super_admin', 'active', 'super_admin', 'suspended'],
+  ]) {
+    const f = membershipSecurityFixture({ actorRole: 'kepala_sekolah', targetRole, targetStatus });
+    await assert.rejects(f.updateMembership(membershipForm(role, status)), /FORBIDDEN/);
+    assert.equal(f.writes.length, 0);
+  }
+});
+
+test('009 only SA can assign roles', async () => {
+  for (const [actorRole, role] of [['super_admin', 'super_admin'], ['super_admin', 'guru']]) {
+    const f = membershipSecurityFixture({ actorRole });
+    await assert.rejects(f.updateMembership(membershipForm(role)), /success=updated/);
+    assert.equal(f.writes.length, 1);
+    assert.equal(f.writes[0].role, role);
+    assert.ok(f.filters.some(([key, val]) => key === 'school_id' && val === 'a'));
+  }
+});
+
+test('008 A-D: action precheck allows two SAs and denies demotion/suspension of the last SA', async () => {
+  for (const [role, status] of [['operator', 'active'], ['super_admin', 'suspended'], ['kepala_sekolah', 'active']]) {
+    const last = membershipSecurityFixture({ targetRole: 'super_admin', count: 1 });
+    await assert.rejects(last.updateMembership(membershipForm(role, status)), /error=last-super-admin/);
+    assert.equal(last.writes.length, 0);
+  }
+  const two = membershipSecurityFixture({ targetRole: 'super_admin', count: 2 });
+  await assert.rejects(two.updateMembership(membershipForm('operator')), /success=updated/);
+  assert.equal(two.writes.length, 1);
+});
+
+test('008 SA self-change obeys the same guard; self suspension of last SA is rejected', async () => {
+  const f = membershipSecurityFixture({ targetRole: 'super_admin', self: true, count: 2 });
+  await assert.rejects(f.updateMembership(membershipForm('operator')), /^Error: REDIRECT:\/dashboard$/);
+  const last = membershipSecurityFixture({ targetRole: 'super_admin', self: true, count: 1 });
+  await assert.rejects(last.updateMembership(membershipForm('super_admin', 'suspended')), /last-super-admin/);
+  assert.equal(last.writes.length, 0);
+});
+
+test('008 database rejection wins after a stale count and never exposes raw details', async () => {
+  for (const [dbCode, expected] of [['P8001', 'last-super-admin'], ['P8002', 'super-admin-only'], ['40001', 'concurrent-change'], ['40P01', 'concurrent-change'], ['P8003', 'update']]) {
+    const f = membershipSecurityFixture({ targetRole: 'super_admin', count: 2, dbCode });
+    await assert.rejects(f.updateMembership(membershipForm('operator')), (error) => {
+      assert.equal(error.message, 'REDIRECT:/dashboard/users?error=' + expected);
+      assert.doesNotMatch(error.message, /PRIVATE DATABASE DETAIL/);
+      return true;
+    });
+  }
+});
+
+test('008 H: SA cannot mutate foreign membership; UI does not offer kepala SA promotion', async () => {
+  const f = membershipSecurityFixture({ foreign: true });
+  await assert.rejects(f.updateMembership(membershipForm('super_admin')), /not-found/);
+  assert.equal(f.writes.length, 0);
+  const ui = fs.readFileSync('src/app/dashboard/users/page.tsx', 'utf8');
+  assert.match(ui, /APP_ROLES.filter\(\(role\) => role !== "super_admin" \|\| canManageSuperAdmins\)/);
+  assert.match(ui, /membership.role !== "super_admin" \|\| canManageSuperAdmins/);
+  assert.match(ui, /assignableRoles.map/);
+});
+
+test('008 helper contract requires active membership AND active school without policy recursion', () => {
+  for (const name of ['is_school_member', 'has_school_role']) {
+    const body = security008.split('create or replace function public.' + name + '(')[1].split('$$;')[0];
+    assert.match(body, /stable security definer set search_path = pg_catalog/);
+    assert.match(body, /join public.schools s on s.id = m.school_id/);
+    assert.match(body, /m.user_id = auth.uid\(\)/);
+    assert.match(body, /m.status = 'active'::public.membership_status and s.is_active/);
+  }
+  assert.match(security008, /revoke all on function public.is_school_member/);
+  assert.doesNotMatch(security008, /auth.jwt\(|raw_user_meta_data|@[a-z0-9.-]+\.[a-z]{2,}/i);
+});
+
+test('008 G: shared write row, actual AFTER deltas, and fail-closed decrement are required', () => {
+  assert.match(security008, /lock table public.schools, public.school_memberships in share row exclusive mode/);
+  assert.match(security008, /set revision = revision \+ 1 where school_id = tenant_id/);
+  assert.match(security008, /create trigger school_memberships_008_count after insert or update or delete/);
+  assert.match(security008, /active_super_admins = active_super_admins \+ delta/);
+  assert.match(security008, /delta >= 0 or active_super_admins \+ delta > 0/);
+  assert.match(security008, /errcode = 'P8001'/);
+  assert.match(security008, /revoke all on app_private.school_admin_state from public, anon, authenticated/);
+  assert.doesNotMatch(security008, /pg_advisory|session_replication_role|disable trigger/i);
+});
+
+test('008 database hierarchy derives actor and checks old and new SA roles within the same school', () => {
+  const guard = security008.split('create or replace function app_private.guard_membership_change()')[1].split('$$;')[0];
+  assert.match(guard, /actor_id uuid := auth.uid\(\)/);
+  assert.match(guard, /old.role = 'super_admin'/);
+  assert.match(guard, /new.role = 'super_admin'/);
+  assert.match(guard, /m.school_id = tenant_id and m.user_id = actor_id/);
+  assert.match(guard, /touches_sa and actor_role <> 'super_admin'/);
+  assert.ok(guard.indexOf('set revision = revision + 1') < guard.indexOf('select m.role into actor_role'));
+});
+
+test('008 removes all old Storage policies and aborts unknown policy or public-bucket drift', () => {
+  for (const prefix of ['tenant members', 'active tenant members']) {
+    for (const verb of ['read', 'upload', 'update', 'delete']) {
+      assert.ok(security008.includes('drop policy if exists "' + prefix + ' can ' + verb + ' private files" on storage.objects;'));
+    }
+  }
+  assert.match(security008, /pg_catalog.pg_policies/);
+  assert.match(security008, /008 requires review of unknown Storage policies/);
+  assert.match(security008, /008 requires all four existing buckets to be private/);
+  assert.doesNotMatch(security008, /(?:delete from|update|insert into) storage.objects/i);
+});
+
+test('008 Storage default-denies business buckets, uploads, updates and deletes; read is avatar-specific', () => {
+  const policies = security008.slice(security008.indexOf('create policy "008 storage scope gate"'));
+  assert.equal((policies.match(/create policy /g) ?? []).length, 3);
+  assert.match(policies, /as restrictive for all to authenticated/);
+  assert.match(policies, /using \(bucket_id = 'avatars' and public.can_read_own_avatar\(name, owner_id\)\)/);
+  assert.match(policies, /with check \(false\)/);
+  assert.match(policies, /as restrictive for delete to authenticated\s+using \(false\)/);
+  assert.doesNotMatch(policies, /for (insert|update) to|to anon/);
+});
+
+test('008 avatar parser returns before UUID cast for malformed paths and binds stored owner', () => {
+  const avatar = security008.split('create or replace function public.can_read_own_avatar')[1].split('$$;')[0];
+  assert.match(avatar, /object_owner is distinct from auth.uid\(\)::text/);
+  assert.match(avatar, /split_part\(object_name, '\/', 3\) = auth.uid\(\)::text/);
+  assert.match(avatar, /jpg\|jpeg\|png\|webp/);
+  assert.ok(avatar.indexOf('object_name !~') < avatar.indexOf('then return false'));
+  assert.ok(avatar.indexOf('then return false') < avatar.indexOf("split_part(object_name, '/', 1)::uuid"));
+  assert.match(avatar, /language plpgsql stable/);
+  assert.doesNotMatch(avatar, /security definer/);
+});
+
+test('008 closes arbitrary admission while preserving password and Google signup trigger', () => {
+  assert.match(security008, /drop policy if exists "users can create pending memberships"/);
+  assert.match(security008, /revoke insert, delete, truncate on public.school_memberships/);
+  assert.doesNotMatch(security008, /drop trigger.*on_auth_user_created|create or replace function public.handle_new_user/);
+  const signup = fs.readFileSync('supabase/migrations/202609100002_auth_membership_security.sql', 'utf8');
+  assert.match(signup, /values \(default_school_id, new.id, 'pending', null\)/);
+  assert.match(signup, /slug = 'kb-devfanta-melati'/);
+  assert.doesNotMatch(security008, /update public.school_memberships set/i);
+});
+
+test('008 closes semester INSERT and profile column/timestamp gaps without data backfill', () => {
+  assert.match(security008, /semesters_008_insert_name before insert/);
+  assert.match(security008, /new.name not in \('Ganjil', 'Genap'\)/);
+  assert.match(security008, /grant update \(full_name, phone, updated_at\) on public.profiles to authenticated/);
+  assert.match(security008, /new.updated_at := now\(\)/);
+  assert.match(security008, /m.user_id = auth.uid\(\) and public.is_school_member\(m.school_id\)/);
+  assert.doesNotMatch(security008, /grant update \([^)]*(?:avatar_path|created_at)/);
+});
+
+test('008 rendered users page offers SA only to SA and keeps SA rows read-only for kepala', async () => {
+  const { renderToStaticMarkup } = loadDependency('react-dom/server');
+  for (const role of ['kepala_sekolah', 'super_admin']) {
+    const context = { user: { id: 'actor' }, membership: member('a', 'active', 'actor', role), supabase: {
+      from(table) {
+        const query = { select() { return query; }, eq() { return query; }, in() { return query; }, order() { return query; },
+          then(resolve, reject) { return Promise.resolve({ data: table === 'school_memberships' ? [
+            { id: 'sa-target', user_id: 'sa-user', role: 'super_admin', status: 'active' },
+            { id: 'op-target', user_id: 'op-user', role: 'operator', status: 'active' },
+          ] : [], error: null }).then(resolve, reject); },
+        };
+        return query;
+      },
+    } };
+    const { default: Users } = load('src/app/dashboard/users/page.tsx', {
+      '@/lib/auth': { APP_ROLES: appConfig.AUTH_ROLES, requireCapability: async () => context },
+      '@/lib/errors': errors, '@/lib/capabilities': capabilities,
+      '@/app/auth/actions': { updateMembership() {} },
+      '@/utils/supabase/admin': { getAuthEmails: async () => new Map() },
+    });
+    const html = renderToStaticMarkup(await Users({ searchParams: Promise.resolve({}) }));
+    assert.equal(html.includes('value="super_admin"'), role === 'super_admin');
+    assert.equal(html.includes('Dikelola Super Admin sekolah.'), role === 'kepala_sekolah');
+    assert.equal((html.match(/<select /g) ?? []).length, role === 'super_admin' ? 2 : 0);
+  }
+});
+
+
+test('basic access is active NULL, preserves role and denies every unlisted capability', async () => {
+  const fixture = tenantFixture([member('a', 'active', 'user-a', null)]);
+  const context = await fixture.getActiveTenantContext();
+  assert.equal(context.role, null);
+  assert.equal((await fixture.getAccountState()).state, 'basic');
+  for (const cap of Object.keys(capabilities.capabilityRoles)) {
+    assert.equal(capabilities.hasCapability(context, cap), ['dashboard.read', 'profile.read', 'profile.update_self', 'school.read'].includes(cap), cap);
+  }
+  await assert.rejects(fixture.requireCapability('users.manage'), /forbidden/);
+  await assert.rejects(fixture.requireCapability('academic.read'), /forbidden/);
+  const shell = load('src/lib/shell.ts');
+  const ui = load('src/components/dashboard/ui.tsx', { 'next/link': { default: ({ children }) => children }, '@/lib/shell': shell });
+  const html = loadDependency('react-dom/server').renderToStaticMarkup(ui.TenantContext({ school: 'Test', role: null, status: 'active' }));
+  assert.match(html, /Akses Dasar/);
+  assert.doesNotMatch(html, /Orang tua/);
+});
+
+test('basic navigation excludes feedback activity notifications master users and system', () => {
+  const navigation = load('src/config/navigation.ts', { './app': appConfig });
+  const links = navigation.navigationForRole(null).flatMap(group => group.items.map(item => item.href));
+  for (const route of ['dashboard','profile','settings','help','about']) assert.ok(links.includes(appConfig.APP_CONFIG.routes[route]));
+  for (const route of ['feedback','activity','notifications','master','users','system']) assert.equal(links.includes(appConfig.APP_CONFIG.routes[route]), false);
+});
+
+test('basic callback goes directly to dashboard without password or requested privileged route', async () => {
+  const response = await callback(authExchange('SIGNED_IN'), { status: 'active', role: null })(req('code=test&flow=google&next=/dashboard/system'));
+  assert.equal(response.headers.get('location'), 'https://school.example/dashboard');
+});
+
+test('Google callback session failure is distinct from provider cancellation', async () => {
+  const auth = authExchange('SIGNED_IN');
+  auth.exchangeCodeForSession = async () => { throw new Error('PRIVATE BACKEND DETAIL'); };
+  const response = await callback(auth)(req('code=test&flow=google'));
+  assert.equal(response.headers.get('location'), 'https://school.example/login?error=verification');
+  assert.doesNotMatch(response.headers.get('location'), /PRIVATE|oauth/);
+});
+
+test('existing assigned role survives Google callback without admission writes', async () => {
+  const fixture = tenantFixture([member('a', 'active', 'user-a', 'guru')]);
+  const context = await fixture.getActiveTenantContext();
+  assert.equal(context.role, 'guru');
+  assert.equal((await fixture.getAccountState()).state, 'active');
+  const response = await callback(authExchange('SIGNED_IN'), context.membership)(req('code=test&flow=google'));
+  assert.equal(response.headers.get('location'), 'https://school.example/dashboard');
+  const source = fs.readFileSync('src/app/auth/callback/route.ts', 'utf8');
+  assert.doesNotMatch(source, /\.insert\(|\.upsert\(|\.update\(/);
+});
+
+test('login has one primary Google CTA before the password fallback', () => {
+  const source = fs.readFileSync('src/app/login/page.tsx', 'utf8');
+  assert.equal((source.match(/<GoogleLogin \/>/g) ?? []).length, 1);
+  assert.ok(source.indexOf('<GoogleLogin') < source.indexOf('<LoginForm'));
+});
+
+test('basic dashboard renders account identity but no academic widget or feedback link', async () => {
+  const context = await tenantFixture([member('a', 'active', 'user-a', null)]).getActiveTenantContext();
+  const shell = load('src/lib/shell.ts');
+  const ui = load('src/components/dashboard/ui.tsx', { 'next/link': { default: ({ children }) => children }, '@/lib/shell': shell });
+  const page = load('src/app/dashboard/page.tsx', {
+    '@/lib/academic': { getAcademicContext: async () => ({ ...context, academicYear: null, semester: null }) },
+    '@/config/app': appConfig, '@/components/dashboard/ui': ui,
+  });
+  const html = loadDependency('react-dom/server').renderToStaticMarkup(await page.default({ searchParams: Promise.resolve({}) }));
+  assert.match(html, /Akses Dasar/);
+  assert.match(html, /Super Admin/);
+  assert.doesNotMatch(html, /Periode akademik|Tahun ajaran aktif|Lihat masukan/);
+});
+
+test('kepala cannot assign any role including an initial role to basic access', async () => {
+  for (const targetRole of [null, 'guru', 'operator']) {
+    const fixture = membershipSecurityFixture({ actorRole: 'kepala_sekolah', targetRole });
+    await assert.rejects(fixture.updateMembership(membershipForm('guru')), /FORBIDDEN/);
+    assert.equal(fixture.writes.length, 0);
+  }
+  const fixture = membershipSecurityFixture({ actorRole: 'super_admin', targetRole: null });
+  await assert.rejects(fixture.updateMembership(membershipForm('guru')), /success=updated/);
+  assert.equal(fixture.writes[0].role, 'guru');
+});
+
+test('optional password setup validates confirmation without a current password', async () => {
+  const fixture = settingsFixture();
+  const invalid = await fixture.changePassword(settings.settingsInitial, formData({ password: 'new-password', confirmation: 'different-password' }));
+  assert.equal(invalid.success, false);
+  assert.equal(fixture.calls.length, 0);
+  const result = await fixture.changePassword(settings.settingsInitial, formData({ password: 'new-password', confirmation: 'new-password' }));
+  assert.equal(result.success, true);
+  assert.deepEqual(Object.keys(fixture.calls[0][1]), ['password']);
+  assert.equal(fixture.updates.length, 0);
+});
+
+test('009 source contract uses deferred Auth identity admission and preserves existing rows', () => {
+  const sql = fs.readFileSync('supabase/migrations/202609280009_google_basic_access.sql', 'utf8');
+  assert.match(sql, /drop constraint active_membership_requires_role/);
+  assert.match(sql, /create constraint trigger on_auth_user_created after insert on auth.users/);
+  assert.match(sql, /deferrable initially deferred/);
+  assert.match(sql, /from auth.identities i where i.user_id=new.id and i.provider='google'/);
+  assert.match(sql, /on conflict \(id\) do nothing/);
+  assert.match(sql, /on conflict \(school_id,user_id\) do nothing/);
+  assert.doesNotMatch(sql, /update public.school_memberships|flow=google|raw_app_meta_data|service_role/);
+  assert.match(sql, /Default school unavailable/);
+  assert.match(sql, /new.role is distinct from old.role/);
+  assert.match(sql, /array\['super_admin'\]::public.app_role\[\]/);
+  assert.match(sql, /009 feedback requires assigned role/);
+  assert.match(sql, /as restrictive for all to authenticated/);
+  assert.match(sql, /revoke all on function public.activate_academic_year.*from public, anon/);
 });

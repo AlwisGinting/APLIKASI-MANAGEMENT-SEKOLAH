@@ -1,16 +1,23 @@
+> **Current status:** 001–007 applied/immutable; 008 DRAFT / NOT APPLIED. See [008 disposable integration design](SECURITY-008.md). No mutation or concurrency suite has been executed.
+
+Disposable baseline provisioning is available in [disposable/README.md](disposable/README.md).
+It executes unchanged 001–007 with a separate test-only enum compatibility commit,
+then validates the catalog. It never applies 008 or runs seed.sql. Catalog readiness
+does not mean the behavioral security/concurrency matrix below has been executed.
+
 # Tahap E: pengujian RLS nyata
 
 `rls.test.mjs` adalah harness read-only, opt-in, localhost saja. Belum dijalankan terhadap database. Suite mock default bukan bukti enforcement RLS nyata.
 
-Siapkan Supabase lokal disposable dengan migration 001–006 dan fixtures yang dibuat manual oleh pengelola: dua sekolah aktif, data akademik/kelas/feedback/membership pada kedua sekolah, serta user biasa yang hanya memiliki membership aktif sekolah A. Pastikan fixture B benar-benar ada dengan positive control dari sesi user B; hasil kosong tanpa fixture bukan bukti isolasi.
+Siapkan Supabase lokal disposable dengan migration 001–007 dan fixtures yang dibuat manual oleh pengelola: dua sekolah aktif, data akademik/kelas/feedback/membership pada kedua sekolah, serta user biasa yang hanya memiliki membership aktif sekolah A. Pastikan fixture B benar-benar ada dengan positive control dari sesi user B; hasil kosong tanpa fixture bukan bukti isolasi.
 
 Inject melalui environment proses CI terisolasi (tanpa dotenv): `RUN_LOCAL_RLS=1`, `RLS_TEST_URL`, `RLS_TEST_PUBLISHABLE_KEY`, `RLS_TEST_USER_ACCESS_TOKEN`, `RLS_TEST_OWN_SCHOOL_ID`, `RLS_TEST_FOREIGN_SCHOOL_ID`. Token harus milik user biasa A, bukan service role. Jalankan `node --test tests/integration/rls.test.mjs`. Jangan log token atau menyimpan credentials di repo. Harness menolak host selain loopback dan tidak melakukan mutation/SQL.
 
 Tahap E masih harus menambahkan dan menjalankan matrix mutation pada database disposable: insert/update/delete sesuai lima role, school column grants/immutable fields, suspended/pending/rejected, cross-tenant FK/ID, RPC activation, stale session, serta role berbeda antar sekolah. Gunakan sesi user biasa; service credentials tidak boleh dipakai untuk assertion RLS. Jangan menjalankan destructive tests pada production. Database provisioning dan perubahan migration tetap memerlukan proses review terpisah.
 
-## Tambahan Tahap B — manual review 007
+## Applied 007 — disposable runtime verification
 
-Draft 007 belum applied, dan harness read-only tahap A tidak menguji trigger audit. Setelah pengelola mereview dan menerapkan 007 pada database disposable, perlu suite transaksi terpisah dengan fixtures untuk:
+007 sudah applied di production menurut owner. Harness read-only tidak menguji trigger audit. Pada database disposable yang diprovisikan terpisah dengan 001–007, perlu suite transaksi dengan fixtures untuk:
 
 - sebagai application roles: direct INSERT audit ditolak (termasuk actor/tenant/timestamp palsu), UPDATE/DELETE/TRUNCATE ditolak; EXECUTE function trigger tidak menjadi API;
 - audit SELECT admin A hanya tenant A, kepala sekolah sama, operator/guru/orang tua ditolak;
