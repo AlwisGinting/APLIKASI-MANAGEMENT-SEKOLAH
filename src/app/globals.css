@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./design-system.css";
 
 :root {
   --background: #f6f8f5;
@@ -20,7 +21,7 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-geist-sans), sans-serif;
+  font-family: var(--font-geist-sans, Arial), sans-serif;
 }
 
 ::selection {
@@ -68,16 +69,13 @@ a {
 .dashboard-shell .muted { color: var(--shell-muted); }
 .dashboard-shell :where(.border, .border-b, .border-r, .border-l-2, .divide-y > *) { border-color: var(--shell-line); }
 .dashboard-shell .notice { background: var(--shell-notice); }
-.dashboard-shell .nav-link:hover { background: var(--shell-notice); }
-.dashboard-shell :where(a, button, input, select, textarea, summary):focus-visible { outline: 3px solid #80baa0; outline-offset: 3px; }
-.dashboard-shell .workspace-page { width: 100%; max-width: 76rem; padding: 2rem 1rem; margin-inline: auto; }
-.dashboard-shell .field { display: block; min-height: 3rem; width: 100%; border: 1px solid var(--shell-line); border-radius: .75rem; background: var(--shell-surface); color: var(--shell-text); padding: .75rem 1rem; font-size: 1rem; }
+.dashboard-shell .nav-link:not([aria-current="page"]):hover { background: var(--shell-notice); }
+.dashboard-shell :where(a, button, input, select, textarea, summary):focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 3px; }
+
 .dashboard-shell .field.pr-24 { padding-right: 6rem; }
-.dashboard-shell .primary-button { min-height: 3rem; padding: .75rem 1.25rem; border-radius: .75rem; background: #20584c; color: #fff; font-size: .875rem; font-weight: 600; }
-.dashboard-shell :disabled { cursor: wait; opacity: .65; }
-.dashboard-shell[data-compact="true"] .workspace-page { padding-block: 1.25rem; }
-.dashboard-shell[data-compact="true"] section.surface { padding: 1rem; }
-@media (min-width: 640px) { .dashboard-shell .workspace-page { padding-inline: 2rem; } }
+
+.dashboard-shell :disabled { cursor: not-allowed; opacity: .65; }
+.dashboard-shell[data-compact="true"] :is(section.surface, .ui-card) { padding: 1rem; }
 /* Existing master-data/feedback pages retain their UI while sharing shell colors. */
 .dashboard-shell [class~="bg-[#f6f8f5]"] { background: var(--shell-bg); }
 .dashboard-shell :is([class~="bg-white"], [class~="bg-white/75"]) { background: var(--shell-surface); }

@@ -1,5 +1,5 @@
 import Link from "next/link";
-
+import { PageHeader } from "@/components/ui";
 export default function NotFound() {
-  return <main className="grid min-h-screen place-items-center bg-[#f6f8f5] px-6"><div className="text-center"><h1 className="text-2xl font-semibold text-[#18312c]">Halaman tidak ditemukan</h1><Link href="/" className="mt-6 inline-block text-[#20584c]">Kembali ke beranda</Link></div></main>;
+  return <main className="grid min-h-dvh place-items-center px-4 py-10"><div className="ui-card max-w-lg text-center"><PageHeader title="Halaman tidak ditemukan" description="Periksa alamat halaman atau kembali ke beranda." /><Link href="/" className="ui-button ui-button-primary mt-6">Kembali ke beranda</Link></div></main>;
 }

@@ -17,7 +17,7 @@ function load(file, mocks = {}, globals = {}) {
   vm.runInNewContext(source, {
     module: loaded, exports: loaded.exports, URL, URLSearchParams, Headers, Response, AbortSignal,
     process: { env: { NEXT_PUBLIC_SUPABASE_URL: 'https://test.invalid' } },
-    require: (id) => Object.hasOwn(mocks, id) ? mocks[id] : id === "@/lib/capabilities" ? load("src/lib/capabilities.ts") : loadDependency(id), ...globals,
+    require: (id) => Object.hasOwn(mocks, id) ? mocks[id] : id === "@/components/ui" ? load("src/components/ui/index.tsx") : id === "@/components/dashboard/ui" ? load("src/components/dashboard/ui.tsx", { "@/lib/shell": load("src/lib/shell.ts"), "next/link": { default: ({ children }) => children } }) : id === "@/lib/capabilities" ? load("src/lib/capabilities.ts") : loadDependency(id), ...globals,
   }, { filename: file });
   return loaded.exports;
 }
@@ -1482,7 +1482,7 @@ test('008 rendered users page offers SA only to SA and keeps SA rows read-only f
     } };
     const { default: Users } = load('src/app/dashboard/users/page.tsx', {
       '@/lib/auth': { APP_ROLES: appConfig.AUTH_ROLES, requireCapability: async () => context },
-      '@/lib/errors': errors, '@/lib/capabilities': capabilities,
+      '@/lib/errors': errors, '@/lib/capabilities': capabilities, '@/lib/shell': load('src/lib/shell.ts'),
       '@/app/auth/actions': { updateMembership() {} },
       '@/utils/supabase/admin': { getAuthEmails: async () => new Map() },
     });

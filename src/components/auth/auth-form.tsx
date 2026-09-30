@@ -1,15 +1,16 @@
 "use client";
 
+import { Alert, Button, Input, FieldError as SharedFieldError } from "@/components/ui";
 import Link from "next/link";
 import { useActionState, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { initialAuthState, validateAuthForm, type AuthField, type AuthFormState, type AuthMode } from "@/lib/auth-form";
 
-const inputClass = "mt-2 min-h-12 w-full rounded-xl border border-[#9aafa4] px-4 py-3 text-base text-[#18312c] outline-none focus:border-[#2f7162] focus:ring-4 focus:ring-[#dcefe5] disabled:opacity-60";
-const linkClass = "font-semibold text-[#20584c] underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-4";
+const inputClass = "field mt-2";
+const linkClass = "font-semibold text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-4";
 
 function FieldError({ name, error }: { name: string; error?: string }) {
-  return error ? <p id={`${name}-error`} className="mt-2 text-sm text-[#a3452d]">{error}</p> : null;
+  return <SharedFieldError id={`${name}-error`}>{error}</SharedFieldError>;
 }
 
 function PasswordField({ name, label, error, newPassword }: { name: "password" | "confirmation"; label: string; error?: string; newPassword: boolean }) {
@@ -17,19 +18,19 @@ function PasswordField({ name, label, error, newPassword }: { name: "password" |
   const [longEnough, setLongEnough] = useState(false);
   const hint = newPassword && name === "password";
   return <div>
-    <label htmlFor={name} className="text-sm font-medium text-[#18312c]">{label}</label>
+    <label htmlFor={name} className="text-sm font-medium text-foreground">{label}</label>
     <div className="relative">
-      <input id={name} name={name} type={visible ? "text" : "password"} autoComplete={newPassword ? "new-password" : "current-password"} required minLength={newPassword ? 8 : undefined} className={`${inputClass} pr-24`} aria-invalid={Boolean(error)} aria-describedby={[hint ? `${name}-hint` : "", error ? `${name}-error` : ""].filter(Boolean).join(" ") || undefined} onInput={(event) => setLongEnough(event.currentTarget.value.length >= 8)} />
-      <button type="button" aria-controls={name} aria-pressed={visible} aria-label={`${visible ? "Sembunyikan" : "Tampilkan"} ${label.toLowerCase()}`} onClick={() => setVisible(!visible)} className="absolute inset-y-0 right-1 mt-2 min-w-20 rounded-lg px-2 text-xs font-semibold text-[#20584c] focus-visible:outline-2 focus-visible:outline-offset-2">{visible ? "Sembunyi" : "Lihat"}</button>
+      <Input id={name} name={name} type={visible ? "text" : "password"} autoComplete={newPassword ? "new-password" : "current-password"} required minLength={newPassword ? 8 : undefined} className={`${inputClass} pr-24`} aria-invalid={Boolean(error)} aria-describedby={[hint ? `${name}-hint` : "", error ? `${name}-error` : ""].filter(Boolean).join(" ") || undefined} onInput={(event) => setLongEnough(event.currentTarget.value.length >= 8)} />
+      <button type="button" aria-controls={name} aria-pressed={visible} aria-label={`${visible ? "Sembunyikan" : "Tampilkan"} ${label.toLowerCase()}`} onClick={() => setVisible(!visible)} className="absolute inset-y-0 right-1 mt-2 min-w-20 rounded-lg px-2 text-xs font-semibold text-primary focus-visible:outline-2 focus-visible:outline-offset-2">{visible ? "Sembunyi" : "Lihat"}</button>
     </div>
-    {hint && <p id={`${name}-hint`} className="mt-2 text-sm text-[#526b61]">{longEnough ? "✓ Minimal 8 karakter terpenuhi." : "Gunakan minimal 8 karakter."}</p>}
+    {hint && <p id={`${name}-hint`} className="mt-2 text-sm text-muted">{longEnough ? "✓ Minimal 8 karakter terpenuhi." : "Gunakan minimal 8 karakter."}</p>}
     <FieldError name={name} error={error} />
   </div>;
 }
 
 export function FormAlert({ state }: { state: AuthFormState }) {
   return <div aria-live={state.success ? "polite" : "assertive"} aria-atomic="true">
-    {state.message && <p role={state.success ? "status" : "alert"} className={`rounded-xl px-4 py-3 text-sm leading-6 ${state.success ? "bg-[#edf6f0] text-[#20584c]" : "bg-[#fff1ed] text-[#a3452d]"}`}>{state.message}</p>}
+    {state.message && <Alert tone={state.success ? "success" : "destructive"}>{state.message}</Alert>}
   </div>;
 }
 
@@ -79,12 +80,12 @@ export function AuthForm({ mode, action, initialState = initialAuthState }: { mo
     <FormAlert state={shown} />
     {!finished && <fieldset disabled={pending} className="min-w-0 space-y-5">
       <legend className="sr-only">{buttonLabel}</legend>
-      {mode === "register" && <div><label htmlFor="full_name" className="text-sm font-medium text-[#18312c]">Nama lengkap</label><input id="full_name" name="full_name" autoComplete="name" required maxLength={150} aria-invalid={Boolean(shown.fieldErrors?.full_name)} aria-describedby={shown.fieldErrors?.full_name ? "full_name-error" : undefined} className={inputClass} /><FieldError name="full_name" error={shown.fieldErrors?.full_name} /></div>}
-      {mode !== "reset" && <div><label htmlFor="email" className="text-sm font-medium text-[#18312c]">Email</label><input id="email" name="email" type="email" inputMode="email" autoCapitalize="none" spellCheck={false} autoComplete="email" required maxLength={254} aria-invalid={Boolean(shown.fieldErrors?.email)} aria-describedby={shown.fieldErrors?.email ? "email-error" : undefined} className={inputClass} /><FieldError name="email" error={shown.fieldErrors?.email} /></div>}
+      {mode === "register" && <div><label htmlFor="full_name" className="text-sm font-medium text-foreground">Nama lengkap</label><Input id="full_name" name="full_name" autoComplete="name" required maxLength={150} aria-invalid={Boolean(shown.fieldErrors?.full_name)} aria-describedby={shown.fieldErrors?.full_name ? "full_name-error" : undefined} className={inputClass} /><FieldError name="full_name" error={shown.fieldErrors?.full_name} /></div>}
+      {mode !== "reset" && <div><label htmlFor="email" className="text-sm font-medium text-foreground">Email</label><Input id="email" name="email" type="email" inputMode="email" autoCapitalize="none" spellCheck={false} autoComplete="email" required maxLength={254} aria-invalid={Boolean(shown.fieldErrors?.email)} aria-describedby={shown.fieldErrors?.email ? "email-error" : undefined} className={inputClass} /><FieldError name="email" error={shown.fieldErrors?.email} /></div>}
       {mode !== "forgot" && <PasswordField key={`password-${revision}`} name="password" label={mode === "reset" ? "Kata sandi baru" : "Kata sandi"} newPassword={newPassword} error={shown.fieldErrors?.password} />}
       {newPassword && <PasswordField key={`confirmation-${revision}`} name="confirmation" label="Konfirmasi kata sandi" newPassword error={shown.fieldErrors?.confirmation} />}
-      {mode === "forgot" && <p className="text-sm leading-6 text-[#526b61]">Buka tautan pemulihan di browser yang sama dengan permintaan ini.</p>}
-      <button type="submit" disabled={pending} className="min-h-12 w-full rounded-xl bg-[#20584c] px-4 py-3 text-sm font-semibold text-white hover:bg-[#2f7162] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#20584c] disabled:cursor-wait disabled:opacity-60">{pending ? pendingLabel : buttonLabel}</button>
+      {mode === "forgot" && <p className="text-sm leading-6 text-muted">Buka tautan pemulihan di browser yang sama dengan permintaan ini.</p>}
+      <Button type="submit" loading={pending} variant={mode === "login" ? "secondary" : "primary"} className="w-full">{pending ? pendingLabel : buttonLabel}</Button>
     </fieldset>}
     {finished && <Link href={mode === "reset" ? "/login?reset=success" : "/login"} className={`block text-center text-sm ${linkClass}`}>Kembali ke halaman masuk</Link>}
   </form>;

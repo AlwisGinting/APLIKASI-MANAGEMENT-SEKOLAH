@@ -1,5 +1,6 @@
-import Link from "next/link";
-import { getAccountState, SCHOOL_NAME } from "@/lib/auth";
+import { AuthCard } from "@/components/auth/auth-card";
+import { Badge, Button } from "@/components/ui";
+import { getAccountState } from "@/lib/auth";
 import { signOut } from "@/app/auth/actions";
 import { redirect } from "next/navigation";
 
@@ -31,20 +32,12 @@ export default async function PendingApprovalPage() {
   if (state === "active" || state === "basic") redirect("/dashboard");
   const copy = stateCopy[state === "unauthenticated" ? "no_membership" : state];
 
-  return <main className="min-h-screen bg-[#f6f8f5] px-6 py-10 sm:px-10">
-    <div className="mx-auto flex min-h-[calc(100vh-5rem)] max-w-xl flex-col justify-center">
-      <Link href="/" className="mb-10 flex items-center gap-3 text-sm font-semibold tracking-wide text-[#20584c]"><span className="grid h-10 w-10 place-items-center rounded-2xl bg-[#20584c] text-lg text-white">K</span>{SCHOOL_NAME}</Link>
-      <div className="rounded-[2rem] border border-[#dce7e1] bg-white p-8 shadow-[0_20px_60px_rgba(32,88,76,.08)] sm:p-10">
-        <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#e98a6a]">Status akses akun</p>
-        <h1 className="mt-3 text-3xl font-semibold tracking-tight text-[#18312c]">{copy.title}</h1>
-        <p className="mt-4 leading-7 text-[#60736e]">{copy.message}</p>
-        <dl className="mt-8 divide-y divide-[#e6eee9] rounded-2xl border border-[#e6eee9] px-5">
-          <div className="flex justify-between gap-4 py-4 text-sm"><dt className="text-[#60736e]">Nama</dt><dd className="text-right font-semibold text-[#18312c]">{profile?.full_name ?? "-"}</dd></div>
-          <div className="flex justify-between gap-4 py-4 text-sm"><dt className="text-[#60736e]">Email</dt><dd className="max-w-[60%] break-all text-right font-semibold text-[#18312c]">{user.email}</dd></div>
-          <div className="flex justify-between gap-4 py-4 text-sm"><dt className="text-[#60736e]">Status</dt><dd className="font-semibold text-[#b85e43]">{copy.status}</dd></div>
+  return <AuthCard eyebrow="Status akses akun" title={copy.title} description={copy.message}>
+        <dl className="mt-8 divide-y divide-border rounded-lg border border-border px-5">
+          <div className="flex flex-wrap justify-between gap-4 py-4 text-sm"><dt className="text-muted">Nama</dt><dd className="text-right font-semibold text-foreground">{profile?.full_name ?? "-"}</dd></div>
+          <div className="flex flex-wrap justify-between gap-4 py-4 text-sm"><dt className="text-muted">Email</dt><dd className="max-w-[60%] break-all text-right font-semibold text-foreground">{user.email}</dd></div>
+          <div className="flex flex-wrap justify-between gap-4 py-4 text-sm"><dt className="text-muted">Status</dt><dd><Badge tone={state === "pending" ? "warning" : "destructive"}>{copy.status}</Badge></dd></div>
         </dl>
-        <form action={signOut} className="mt-8"><button type="submit" className="secondary-button w-full">Keluar</button></form>
-      </div>
-    </div>
-  </main>;
+        <form action={signOut} className="mt-8"><Button type="submit" variant="secondary" className="w-full">Keluar</Button></form>
+  </AuthCard>;
 }
