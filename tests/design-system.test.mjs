@@ -30,7 +30,7 @@ function load(file, mocks = {}, globals = {}) {
     }
     return require(id);
   };
-  vm.runInNewContext(source, { module: loaded, exports: loaded.exports, require: resolve, process: { env: {} }, URL, URLSearchParams, setTimeout, clearTimeout, ...globals }, { filename: file });
+  vm.runInNewContext(source, { module: loaded, exports: loaded.exports, require: resolve, process: { env: {} }, URL, URLSearchParams, TextEncoder, TextDecoder, setTimeout, clearTimeout, ...globals }, { filename: file });
   return loaded.exports;
 }
 const ui = load('src/components/ui/index.tsx');
@@ -173,6 +173,180 @@ test('F5 dirty snapshots exclude sensitive controls and reset defaults track suc
   const gate = helpers.submissionGate(); assert.equal(gate.enter(), true); assert.equal(gate.enter(), false); gate.leave(); assert.equal(gate.enter(), true);
   let prevented = false; const unload = { preventDefault() { prevented = true; }, returnValue: 'old' };
   helpers.warnBeforeUnload(unload); assert.equal(prevented, true); assert.equal(unload.returnValue, '');
+});
+
+const tabular = load('src/lib/tabular-engine.ts');
+const interchangeSchema = {
+  unknownHeaders: 'reject',
+  columns: [
+    { key: 'name', label: 'Nama', importHeader: 'Nama', required: true, normalize: value => typeof value === 'string' ? value.trim() : value },
+    { key: 'amount', label: 'Jumlah', importHeader: 'Jumlah', required: true, parse: value => {
+      const result = load('src/lib/form-engine.ts').parseNumber(value);
+      return result.ok ? result : { ok: false, message: result.message };
+    } },
+  ],
+};
+
+test('F6 CSV parser handles BOM, line endings, quoted comma, escaped quotes, multiline, empty and trailing cells', () => {
+  const csv = '\uFEFFNama,Jumlah,Catatan,Kosong,\r\n"Ayu, Budi",2,"Dia berkata ""siap""",,\r\n"Baris satu\nBaris dua",3,"Multiline",,\n';
+  const parsed = tabular.parseCsv(csv);
+  assert.equal(parsed.ok, true);
+  assert.deepEqual(Array.from(parsed.document.headers), ['Nama', 'Jumlah', 'Catatan', 'Kosong', '']);
+  assert.deepEqual(Array.from(parsed.document.records[0].cells), ['Ayu, Budi', '2', 'Dia berkata "siap"', '', '']);
+  assert.equal(parsed.document.records[0].rowNumber, 2);
+  assert.equal(parsed.document.records[1].rowNumber, 3);
+  assert.equal(parsed.document.records[1].cells[0], 'Baris satu\nBaris dua');
+  const crlf = tabular.parseCsv('a,b\r\n1,2\r\n');
+  const lf = tabular.parseCsv('a,b\n1,2\n');
+  assert.equal(crlf.ok && crlf.document.records[0].rowNumber, 2);
+  assert.equal(lf.ok && lf.document.records[0].rowNumber, 2);
+});
+
+test('F6 CSV parser rejects malformed quotes and enforces byte, row, column and cell limits', () => {
+  assert.equal(tabular.parseCsv('a,b\n"broken,x\n').issue.code, 'invalid-csv');
+  assert.equal(tabular.parseCsv('a"b,c\n').issue.code, 'invalid-csv');
+  assert.equal(tabular.parseCsv('name\nlong value', { maxCellCharacters: 4 }).issue.code, 'cell-limit');
+  assert.equal(tabular.parseCsv('a,b\n1,2', { maxColumns: 1 }).issue.code, 'column-limit');
+  assert.equal(tabular.parseCsv('a\n1\n2', { maxRows: 1 }).issue.code, 'row-limit');
+  assert.equal(tabular.parseCsv('a\n1', { maxFileBytes: 2 }).issue.code, 'file-too-large');
+  assert.equal(tabular.parseCsv('😀', { maxFileBytes: 3 }).issue.code, 'file-too-large');
+  assert.throws(() => tabular.parseCsv('a', { maxRows: 0 }), /Invalid tabular limits/);
+  assert.equal(tabular.decodeCsvBytes(new Uint8Array([0xc3])).issue.code, 'invalid-csv');
+});
+
+test('F6 file acceptance is CSV-only, size bounded and MIME remains only a hint', () => {
+  assert.equal(tabular.validateImportFile({ name: 'data.CSV', type: 'text/csv;charset=utf-8', size: 10 }), null);
+  assert.equal(tabular.validateImportFile({ name: 'data.xlsx', type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', size: 10 }).code, 'unsupported-file');
+  assert.equal(tabular.validateImportFile({ name: 'data.csv', type: 'application/octet-stream', size: 10 }).code, 'unsupported-file');
+  assert.equal(tabular.validateImportFile({ name: 'data.csv', type: 'text/csv', size: 101 }, { maxFileBytes: 100 }).code, 'file-too-large');
+  assert.equal(tabular.xlsxAdapter, null);
+  assert.deepEqual(Array.from(tabular.supportedImportFormats()), ['csv']);
+});
+
+test('F6 header validation rejects empty, missing, duplicate and unknown headers deterministically', () => {
+  const valid = tabular.validateHeaders([' jumlah ', 'NAMA'], interchangeSchema);
+  assert.equal(valid.ok, true);
+  assert.deepEqual(JSON.parse(JSON.stringify([...valid.mapping.entries()])), [['name', 1], ['amount', 0]]);
+  const missing = tabular.validateHeaders(['Nama'], interchangeSchema);
+  assert.equal(missing.ok, false);
+  assert.ok(missing.issues.some(issue => issue.code === 'missing-required' && issue.columnKey === 'amount'));
+  assert.ok(tabular.validateHeaders(['Nama', 'nama', 'Jumlah'], interchangeSchema).issues.some(issue => issue.code === 'duplicate'));
+  assert.ok(tabular.validateHeaders(['Nama', 'Jumlah', ''], interchangeSchema).issues.some(issue => issue.code === 'empty'));
+  assert.ok(tabular.validateHeaders(['Nama', 'Jumlah', 'School ID'], interchangeSchema).issues.some(issue => issue.code === 'unknown'));
+  assert.equal(tabular.validateHeaders(['Nama', 'Jumlah', 'Catatan'], { ...interchangeSchema, unknownHeaders: 'ignore' }).ok, true);
+  assert.equal(tabular.validateHeaders(['A'], { columns: [{ key: 'duplicate', label: 'A' }, { key: 'duplicate', label: 'B' }] }).issues[0].code, 'invalid-schema');
+  assert.equal(tabular.validateHeaders(['A'], { columns: [] }).issues[0].code, 'invalid-schema');
+});
+
+test('F6 preview preserves source row numbers, normalizes valid rows and reports field/row errors without mutations', () => {
+  let mutationCalls = 0;
+  const schema = { ...interchangeSchema, validateRow(values) { return values.amount < 0 ? ['Jumlah tidak boleh negatif.'] : []; } };
+  const preview = tabular.previewCsv('Nama,Jumlah\n"  Ayu  ",12\n,Bad\nBudi,-1\n,,\n', schema);
+  assert.equal(preview.ok, true);
+  assert.equal(preview.preview.totalRows, 4);
+  assert.equal(preview.preview.validRows, 1);
+  assert.equal(preview.preview.invalidRows, 2);
+  assert.equal(preview.preview.skippedRows, 1);
+  assert.equal(preview.preview.rows[0].rowNumber, 2);
+  assert.equal(preview.preview.rows[0].values.name, 'Ayu');
+  assert.equal(preview.preview.rows[1].rowNumber, 3);
+  assert.ok(preview.preview.rows[1].fieldErrors.name);
+  assert.equal(preview.preview.rows[1].values.name, '');
+  assert.equal(preview.preview.rows[1].values.amount, 'Bad');
+  assert.equal(preview.preview.rows[2].rowNumber, 4);
+  assert.deepEqual(Array.from(preview.preview.rows[2].rowErrors), ['Jumlah tidak boleh negatif.']);
+  assert.equal(mutationCalls, 0);
+});
+
+test('F6 header failures are safe and row parser exceptions become generic field errors', () => {
+  const badHeader = tabular.previewCsv('Nama,Unknown\nA,B\n', interchangeSchema);
+  assert.equal(badHeader.ok, false);
+  assert.equal(badHeader.issue.code, 'invalid-headers');
+  assert.doesNotMatch(JSON.stringify(badHeader), /stack|SQL|PRIVATE/);
+  const schema = { columns: [{ key: 'value', label: 'Nilai', required: true, parse() { throw new Error('PRIVATE_STACK'); } }] };
+  const preview = tabular.previewCsv('Nilai\nx\n', schema);
+  assert.equal(preview.ok, true);
+  assert.deepEqual(Array.from(preview.preview.rows[0].fieldErrors.value), ['Nilai tidak dapat diproses.']);
+  assert.doesNotMatch(JSON.stringify(preview), /PRIVATE_STACK/);
+});
+
+test('F6 privilege and tenant columns remain plain preview input with no mutation path', () => {
+  let writes = 0;
+  const schema = { columns: [{ key: 'school_id', label: 'School ID' }, { key: 'role', label: 'Role' }, { key: 'value', label: 'Value' }] };
+  const result = tabular.previewCsv('School ID,Role,Value\nforeign-school,super_admin,Sample\n', schema);
+  assert.equal(result.ok, true);
+  assert.equal(result.preview.rows[0].values.school_id, 'foreign-school');
+  assert.equal(result.preview.rows[0].values.role, 'super_admin');
+  assert.equal(writes, 0);
+  const source = fs.readFileSync('src/components/data/csv-import-preview.tsx', 'utf8');
+  assert.doesNotMatch(source, /server action|supabase|\.insert\(|\.upsert\(|school_id|tenant_id/);
+});
+
+test('F6 CSV export and templates are deterministic, quoted, Unicode-safe and formula-neutralized', () => {
+  const columns = [
+    { key: 'name', label: 'Nama, unicode', exportHeader: 'Nama, unicode' },
+    { key: 'note', label: 'Catatan' },
+    { key: 'amount', label: 'Jumlah', kind: 'number' },
+    { key: 'empty', label: 'Kosong' },
+  ];
+  const rows = [{ name: 'Éka "A"', note: 'baris 1\r\nbaris 2', amount: -12, empty: null }];
+  const output = tabular.exportCsv(rows, columns, { filename: 'Laporan / Aman' });
+  assert.equal(output.content, '"Nama, unicode",Catatan,Jumlah,Kosong\r\n"Éka ""A""","baris 1\r\nbaris 2",-12,\r\n');
+  assert.equal(output.filename, 'Laporan-Aman.csv');
+  assert.equal(output.contentType, 'text/csv;charset=utf-8');
+  assert.equal(output.rowCount, 1);
+  assert.equal(tabular.csvCell('=HYPERLINK("x")'), `"'=HYPERLINK(""x"")"`);
+  assert.match(tabular.csvCell('\t@SUM(A1)'), /^'/);
+  assert.match(tabular.csvCell(' +SUM(A1)'), /^'/);
+  assert.match(tabular.csvCell('-cmd'), /^'/);
+  assert.equal(tabular.csvCell(-12, { key: 'n', label: 'N', kind: 'number' }), '-12');
+  assert.equal(tabular.csvCell('-12', { key: 'n', label: 'N', kind: 'number' }), '-12');
+  assert.deepEqual(JSON.parse(JSON.stringify(tabular.parseCalendarDateCell('2024-02-29'))), { ok: true, value: '2024-02-29' });
+  assert.equal(tabular.parseCalendarDateCell('2025-02-29').ok, false);
+  assert.throws(() => tabular.csvCell({ unsafe: true }), /Unsupported export value/);
+  assert.equal(tabular.createCsvTemplate(columns), '"Nama, unicode",Catatan,Jumlah,Kosong\r\n');
+  assert.equal(tabular.createCsvTemplate(columns, { includeExampleRow: true }), '"Nama, unicode",Catatan,Jumlah,Kosong\r\n,,,\r\n');
+  assert.throws(() => tabular.safeFilename('../bad', 'xlsx'), /Unsupported export extension/);
+  assert.doesNotMatch(tabular.safeFilename('..\\folder\u0000name'), /[\\/\u0000-\u001f]/);
+});
+
+test('F6 adapter and print helpers stay bounded and browser-only at the action boundary', () => {
+  const { PrintOnly, NoPrint, PrintablePage } = load('src/components/print/print-layout.tsx');
+  const printUI = load('src/components/print/print-button.tsx');
+  const html = renderToStaticMarkup(h('main', null,
+    h(NoPrint, null, 'Chrome'), h(PrintOnly, null, 'Cetak saja'),
+    h(PrintablePage, { title: 'Laporan fixture', description: 'Data terotorisasi' }, h('p', null, 'Baris')),
+    h(printUI.PrintButton, null),
+  ));
+  assert.match(html, /class="no-print"/);
+  assert.match(html, /class="print-only"/);
+  assert.match(html, /<h1>Laporan fixture<\/h1>/);
+  assert.match(html, /Cetak \/ Simpan PDF/);
+  const printSource = fs.readFileSync('src/components/print/print-button.tsx', 'utf8');
+  assert.match(printSource, /^"use client"/);
+  assert.match(printSource, /window\.print\(\)/);
+  const css = fs.readFileSync('src/app/design-system.css', 'utf8');
+  assert.match(css, /@media print/);
+  assert.match(css, /\.dashboard-shell > aside/);
+  assert.match(css, /\.no-print[^\{]*\{[^}]*display: none/s);
+  assert.match(css, /\.dashboard-shell :is\(button, input, select, textarea, summary\)/);
+  assert.match(css, /\.dashboard-shell \.data-actions/);
+  assert.match(css, /\.data-table thead \{ display: table-header-group/);
+  assert.match(css, /\.data-scroll \{[^}]*overflow-x: auto/s);
+  assert.match(css, /\.import-file-control \{[^}]*flex-wrap: wrap/s);
+  assert.match(css, /\.import-file-name \{ max-width: 100%; overflow-wrap: anywhere/s);
+  assert.match(css, /\.import-summary \{ display: grid; grid-template-columns: repeat\(auto-fit/);
+  assert.match(css, /\.import-file-control \{[^}]*min-width: 0/s);
+  assert.match(css, /\.data-scroll[^\{]*\{[^}]*max-width: 100%[^}]*overflow-x: auto/s);
+  const importSource = fs.readFileSync('src/components/data/csv-import-preview.tsx', 'utf8');
+  assert.doesNotMatch(importSource, /signUp|school_id|tenant_id|\.insert\(/);
+  const previewPanel = load('src/components/data/csv-import-preview.tsx').CsvImportPreviewPanel;
+  const previewHtml = renderToStaticMarkup(h(previewPanel, { schema: interchangeSchema, id: 'fixture-import' }));
+  assert.match(previewHtml, /Pratinjau impor CSV/);
+  assert.match(previewHtml, /type="file"/);
+  assert.match(previewHtml, /accept="\.csv,text\/csv,application\/csv/);
+  assert.doesNotMatch(previewHtml, /type="submit"|Konfirmasi impor|Simpan ke database/);
+  preview('f6-import-preview', previewHtml, true);
 });
 test('auth states retain distinct copy and redirect active/basic accounts', async () => {
   for (const [state, text] of [['pending', 'Menunggu persetujuan'], ['rejected', 'Permintaan akses belum disetujui'], ['suspended', 'Akses dinonaktifkan'], ['no_membership', 'Akses sekolah belum tersedia']]) {

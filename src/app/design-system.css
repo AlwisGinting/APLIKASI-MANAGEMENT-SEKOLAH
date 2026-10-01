@@ -132,3 +132,33 @@ label:has(+ .ui-checkbox) { min-height: 2.75rem; display: flex; align-items: cen
 .form-error-summary a { display: inline-flex; align-items: center; min-height: 2.75rem; text-decoration: underline; overflow-wrap: anywhere; }
 .form-fields .ui-checkbox { vertical-align: middle; }
 .form-fields label:has(+ .ui-checkbox) { min-height: 2.75rem; }
+
+/* F6: browser print keeps only the already-authorized page representation. */
+.print-only { display: none; }
+.import-file-control { display: flex; flex-wrap: wrap; align-items: end; gap: 1rem; min-width: 0; }
+.import-file-control > * { flex: 1 1 16rem; min-width: 0; }
+.import-file-name { max-width: 100%; overflow-wrap: anywhere; }
+.import-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr)); gap: .75rem; }
+.import-summary > div { min-width: 0; padding: .75rem; border: 1px solid var(--border); border-radius: var(--radius-control); overflow-wrap: anywhere; }
+.import-summary dt { color: var(--muted); font-size: var(--text-small); }
+.import-summary dd { margin-top: .25rem; font-size: 1.25rem; font-weight: 600; }
+.import-preview-status { font-weight: 600; }
+@media print {
+  @page { margin: 14mm; }
+  html, body { min-height: 0 !important; background: #fff !important; color: #111 !important; print-color-adjust: economy; -webkit-print-color-adjust: economy; }
+  .no-print, .dashboard-shell > aside, .dashboard-shell > header, .dashboard-shell > button, .dashboard-shell :is(button, input, select, textarea, summary), .dashboard-shell .data-actions, dialog { display: none !important; }
+  .print-only { display: block !important; }
+  .dashboard-shell { min-height: 0 !important; padding-left: 0 !important; background: #fff !important; color: #111 !important; }
+  .dashboard-shell #dashboard-content { min-width: 0 !important; padding: 0 !important; }
+  .workspace-page, .print-page { width: 100% !important; max-width: none !important; padding: 0 !important; margin: 0 !important; overflow: visible !important; }
+  .print-page-header { margin-bottom: 1rem; border-bottom: 1px solid #777; padding-bottom: .5rem; }
+  .print-page-header h1 { font-size: 18pt; }
+  .print-page-header p { margin-top: .25rem; color: #333; }
+  .ui-card { box-shadow: none !important; break-inside: avoid; }
+  .data-scroll { max-width: none !important; overflow: visible !important; border: 0 !important; }
+  .data-table { width: 100% !important; min-width: 0 !important; font-size: 9pt; }
+  .data-table thead { display: table-header-group; }
+  .data-table tr { break-inside: avoid; }
+  .data-table th, .data-table td { max-width: none; overflow-wrap: anywhere; }
+  .data-table a { color: inherit; text-decoration: none; }
+}
