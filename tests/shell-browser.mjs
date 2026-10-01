@@ -38,7 +38,30 @@ async function run() {
     }
     const first = [...doc.querySelectorAll('a,button,input,select,summary')].find(visible);
     if (first) { first.focus(); check(doc.activeElement === first, prefix + ' focusable'); }
+    const tableRegion = doc.querySelector('.data-scroll');
+    if (tableRegion) {
+      const bounds = tableRegion.getBoundingClientRect();
+      check(bounds.left >= 0 && bounds.right <= width, prefix + ' table region contained');
+      check(win.getComputedStyle(tableRegion).overflowX === 'auto', prefix + ' local table scroll');
+      tableRegion.focus(); check(doc.activeElement === tableRegion, prefix + ' table keyboard focus');
+      tableRegion.scrollLeft = tableRegion.scrollWidth;
+      const action = doc.querySelector('.data-actions a');
+      if (action) {
+        action.focus();
+        const actionBounds = action.getBoundingClientRect();
+        check(actionBounds.left >= bounds.left && actionBounds.right <= bounds.right, prefix + ' row action reachable');
+        check(actionBounds.height >= 44, prefix + ' action touch height');
+      }
+      for (const control of doc.querySelectorAll('.data-toolbar input:not([type="hidden"]),.data-toolbar select,.data-toolbar button,.data-toolbar a,.data-pagination a,.data-pagination button')) {
+        const rect = control.getBoundingClientRect();
+        check(rect.left >= 0 && rect.right <= width, prefix + ' data control contained');
+        check(rect.height >= 44, prefix + ' data control touch height');
+      }
+    }
     if (shell) {
+      // Focusing an off-screen row action scrolls the document. Restore the
+      // initial viewport before comparing the sticky header with school context.
+      win.scrollTo(0, 0);
       const summary = doc.querySelector('details summary');
       if (summary) {
         summary.parentElement.open = true;

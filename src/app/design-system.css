@@ -110,3 +110,17 @@ label:has(+ .ui-checkbox) { min-height: 2.75rem; display: flex; align-items: cen
 .shell-breadcrumb a { display: inline-flex; align-items: center; min-height: 2.75rem; text-decoration: underline; text-underline-offset: .2em; }
 .shell-breadcrumb [aria-current="page"] { font-weight: 600; }
 .dashboard-shell .nav-link[aria-current="location"] { border-left: 3px solid currentColor; }
+
+/* F4: preserve readable columns; only this keyboard-focusable region scrolls. */
+.data-scroll { min-width: 0; max-width: 100%; overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius-control); }
+.data-table { width: 100%; min-width: 38rem; border-collapse: collapse; background: var(--surface); }
+.data-table caption { text-align: left; padding: 1rem; font-weight: 600; }
+.data-table th, .data-table td { padding: .75rem 1rem; border-bottom: 1px solid var(--border); vertical-align: top; overflow-wrap: anywhere; max-width: 24rem; }
+.data-table th { background: var(--secondary); }
+.data-sort, .data-actions a { display: inline-flex; align-items: center; min-height: 2.75rem; text-decoration: underline; text-underline-offset: .2em; }
+.data-actions { display: flex; flex-wrap: wrap; gap: .75rem; }
+.data-toolbar, .data-pagination { display: flex; flex-wrap: wrap; align-items: end; gap: 1rem; min-width: 0; overflow-wrap: anywhere; }
+.data-toolbar > div { flex: 1 1 12rem; min-width: 0; max-width: 100%; }
+.data-toolbar .field { max-width: 100%; }
+.data-filter-status { flex-basis: 100%; }
+.data-pagination { align-items: center; }

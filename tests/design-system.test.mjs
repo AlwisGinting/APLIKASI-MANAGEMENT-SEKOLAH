@@ -30,7 +30,7 @@ function load(file, mocks = {}) {
     }
     return require(id);
   };
-  vm.runInNewContext(source, { module: loaded, exports: loaded.exports, require: resolve, process: { env: {} }, URL, setTimeout, clearTimeout }, { filename: file });
+  vm.runInNewContext(source, { module: loaded, exports: loaded.exports, require: resolve, process: { env: {} }, URL, URLSearchParams, setTimeout, clearTimeout }, { filename: file });
   return loaded.exports;
 }
 const ui = load('src/components/ui/index.tsx');
@@ -214,4 +214,102 @@ test('F3 error boundary and loading state use safe feedback without exception de
   const loading = render(load('src/app/dashboard/loading.tsx').default, {});
   assert.match(loading, /aria-busy="true"/);
   assert.match(loading, /role="status"/);
+});
+
+const dataQuery = load('src/lib/data-query.ts');
+const dataUI = load('src/components/data/data-table.tsx');
+const dataConfig = { sorts: ['name', 'created'], defaultSort: 'name', filters: [{ key: 'kind', label: 'Jenis data contoh dengan keterangan panjang', options: [{ value: 'a', label: 'Kelompok contoh A' }, { value: 'b', label: 'Kelompok contoh B' }] }] };
+const parse = params => dataQuery.parseDataQuery(params, dataConfig);
+const dataColumns = [{ id: 'name', header: 'Nama data contoh', sortKey: 'name', cell: row => row.name }, { id: 'value', header: 'Keterangan', cell: row => row.value }];
+const tableProps = { caption: 'Data contoh pengujian', columns: dataColumns, rowKey: row => row.id, query: parse({}) };
+
+test('F4 query defaults and malformed pages use a bounded safe window', () => {
+  const query = parse({});
+  assert.equal(query.page, 1); assert.equal(query.pageSize, 25); assert.equal(query.sort, 'name'); assert.equal(query.direction, 'asc');
+  for (const page of ['0', '-2', '1.5', '1e3', 'Infinity', '999999999999999999', ['2','3']]) assert.equal(parse({ page }).page, 1);
+  assert.equal(parse({ page: '2' }).page, 2);
+});
+test('F4 page sizes and sort input cannot select unbounded or arbitrary fields', () => {
+  for (const pageSize of ['0', '-1', '1000000', 'abc']) assert.equal(parse({ pageSize }).pageSize, 25);
+  for (const pageSize of ['10','25','50']) assert.equal(parse({ pageSize }).pageSize, Number(pageSize));
+  assert.equal(parse({ sort: 'name; DROP TABLE x', direction: 'DESC NULLS FIRST' }).sort, 'name');
+  assert.equal(parse({ direction: 'sideways' }).direction, 'asc');
+  assert.equal(parse({ sort: 'created', direction: 'desc' }).direction, 'desc');
+});
+test('F4 search normalization and allowlisted filters reject ambiguous inputs', () => {
+  assert.equal(parse({ q: '  satu\n  dua\u0000 ' }).q, 'satu dua');
+  assert.equal(parse({ q: 'x'.repeat(500) }).q.length, 200);
+  assert.equal(parse({ q: ['a','b'] }).q, '');
+  assert.equal(parse({ 'filter.kind': 'a' }).filters.kind, 'a');
+  assert.equal(Object.keys(parse({ 'filter.kind': 'unknown', 'filter.tenant': 'foreign' }).filters).length, 0);
+});
+test('F4 URL round-trip preserves data state while removing unknown parameters', () => {
+  const query = parse({ page: '3', pageSize: '10', q: 'Satu & Dua', sort: 'created', direction: 'desc', 'filter.kind': 'b', token: 'NEVER_COPY' });
+  const url = dataQuery.queryHref(query, { page: 4 });
+  assert.ok(!url.includes('NEVER_COPY'));
+  const back = parse(Object.fromEntries(new URLSearchParams(url.slice(1))));
+  assert.equal(back.page, 4); assert.equal(back.q, query.q); assert.equal(back.filters.kind, 'b'); assert.equal(back.sort, 'created'); assert.equal(back.direction, 'desc');
+});
+test('F4 server contract maps identifiers and adds a deterministic unique tie-break', () => {
+  const result = dataQuery.serverQuery({ page: '3', pageSize: '10', sort: 'created', direction: 'desc' }, dataConfig, { name: 'display_name', created: 'created_at' }, 'id');
+  assert.equal(result.offset, 20); assert.equal(result.limit, 10);
+  assert.equal(JSON.stringify(result.order), JSON.stringify([{ field: 'created_at', direction: 'desc' }, { field: 'id', direction: 'asc' }]));
+  assert.throws(() => dataQuery.serverQuery({}, dataConfig, {}, 'id'));
+  assert.throws(() => dataQuery.parseDataQuery({}, { ...dataConfig, defaultSort: 'bad' }));
+});
+test('F4 table renders semantic columns, escaped cells, zero and missing values', () => {
+  const html = render(dataUI.DataTable, { ...tableProps, rows: [{ id:'1',name:'<script>private</script>',value:0 }, { id:'2',name:'B',value:null }] });
+  assert.match(html, /<caption>Data contoh pengujian<\/caption>/); assert.match(html, /scope="col"/); assert.match(html, /<tbody>/);
+  assert.match(html, />0<\/td>/); assert.match(html, /Belum diisi/); assert.match(html, /&lt;script&gt;/); assert.doesNotMatch(html, /<script>/);
+});
+test('F4 sortable headers expose active direction and preserve filter state', () => {
+  const html = render(dataUI.DataTable, { ...tableProps, query: parse({page:'3',q:'cari','filter.kind':'a'}), rows:[{id:'1',name:'A'}] });
+  assert.match(html, /aria-sort="ascending"/); assert.match(html, /direction=desc/); assert.match(html, /page=1/); assert.match(html, /filter.kind=a/);
+  assert.match(html, /scope="col" style="text-align:left">Keterangan<\/th>/);
+});
+test('F4 row actions are explicit caller-owned links with no destructive default', () => {
+  const props = { ...tableProps, rows:[{id:'1',name:'A'}] };
+  assert.doesNotMatch(render(dataUI.DataTable, props), /Tindakan/);
+  const html = render(dataUI.DataTable, { ...props, actions: row => h('a', {href:`?record=${row.id}`, 'aria-label':`Lihat ${row.name}`}, 'Lihat') });
+  assert.match(html, /Tindakan/); assert.match(html, /aria-label="Lihat A"/); assert.doesNotMatch(html, /Hapus|onClick/);
+});
+test('F4 empty dataset and filtered no-results have distinct safe feedback', () => {
+  assert.match(render(dataUI.DataTable, {...tableProps,rows:[]}), /Belum ada data/);
+  assert.match(render(dataUI.DataTable, {...tableProps,query:parse({q:'cari'}),rows:[]}), /Tidak ada hasil yang cocok/);
+  assert.match(render(dataUI.DataFeedback, {state:'error', error:new Error('PRIVATE_SQL')}), /role="alert"/);
+  assert.doesNotMatch(render(dataUI.DataFeedback, {state:'error', error:new Error('PRIVATE_SQL')}), /PRIVATE_SQL/);
+  const html = render(dataUI.DataFeedback, {state:'loading'}); assert.match(html, /aria-busy="true"/); assert.match(html, /ui-skeleton/); assert.match(html, /role="status"/);
+});
+test('F4 GET toolbar labels controls, resets page and keeps sorting', () => {
+  const html = render(dataUI.DataToolbar, {id:'example',query:parse({page:'4',q:'cari',direction:'desc','filter.kind':'a'}),filters:dataConfig.filters});
+  assert.match(html, /method="get"/); assert.match(html, /for="example-q"/); assert.match(html, /for="example-kind"/); assert.match(html, /name="page" value="1"/);
+  assert.match(html, /name="direction" value="desc"/); assert.match(html, /filter aktif/); assert.match(html, /Hapus pencarian dan filter/);
+});
+test('F4 pagination disables first and last boundaries including zero totals', () => {
+  const first = render(dataUI.DataPagination, {query:parse({}),total:51});
+  assert.match(first, /disabled=""[^>]*>Sebelumnya/); assert.match(first, /rel="next"/);
+  const last = render(dataUI.DataPagination, {query:parse({page:'3'}),total:51});
+  assert.match(last, /rel="prev"/); assert.match(last, /disabled=""[^>]*>Berikutnya/);
+  const zero = render(dataUI.DataPagination, {query:parse({}),total:0}); assert.doesNotMatch(zero, /rel="next"|rel="prev"/);
+});
+test('F4 pagination preserves query state and recovers an out-of-range page honestly', () => {
+  const html = render(dataUI.DataPagination, {query:parse({page:'8',q:'cari','filter.kind':'b',sort:'created'}),total:30});
+  assert.match(html, /Halaman 8 dari 2/); assert.match(html, /Kembali ke halaman pertama/); assert.match(html, /q=cari/); assert.match(html, /filter.kind=b/); assert.match(html, /sort=created/);
+  assert.throws(() => render(dataUI.DataPagination, {query:parse({}),total:-1}));
+  assert.match(render(dataUI.DataTable, {...tableProps,query:parse({page:'8'}),rows:[]}), /Halaman ini tidak tersedia/);
+  assert.doesNotMatch(render(dataUI.DataPagination, {query:parse({page:'100000'}),total:3000000}), /rel="next"/);
+});
+test('F4 calendar dates preserve dates and timestamps require an explicit timezone', () => {
+  const format = load('src/lib/data-format.ts');
+  assert.match(format.calendarDate('2024-02-29'), /29/); assert.equal(format.calendarDate('2025-02-29'), 'Belum diisi');
+  assert.equal(format.dateTime('2026-01-01T12:00:00'), 'Belum diisi');
+  assert.match(format.dateTime('2026-01-01T00:00:00Z'), /07.00.*WIB/);
+});
+test('F4 isolated reference composes server-sized records with reusable controls', () => {
+  const query = parse({ q:'contoh','filter.kind':'a' });
+  const rows = [{id:'1',name:'NamaContohSangatPanjangTanpaSpasi'.repeat(6),value:'Keterangan panjang dalam bahasa Indonesia untuk pemeriksaan layout'}, {id:'2',name:'Contoh kedua',value:null}];
+  const html = renderToStaticMarkup(h('main', {className:'workspace-page'}, h(ui.PageHeader,{title:'Referensi data (fixture)'}), h(dataUI.DataToolbar,{id:'fixture',query,filters:dataConfig.filters}), h(dataUI.DataTable,{...tableProps,query,rows,actions:row=>h('a',{href:`?record=${row.id}`},'Lihat rincian')}),h(dataUI.DataPagination,{query,total:60})));
+  assert.equal((html.match(/<tbody>/g)||[]).length,1);
+  preview('f4-data',html,true);
+  for (const state of ['loading','empty','no-results','error']) preview(`f4-${state}`,render(dataUI.DataFeedback,{state}),true);
 });
