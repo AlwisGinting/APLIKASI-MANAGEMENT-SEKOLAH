@@ -1,3 +1,4 @@
+import { SettingsBreadcrumb } from "@/components/dashboard/settings-breadcrumb";
 import { requireCapability } from "@/lib/auth";
 import { getSchoolContext } from "@/lib/school";
 import { canManageSchool } from "@/lib/shell";
@@ -18,7 +19,7 @@ export default async function SchoolPage() {
     { name: "vision", label: "Visi", type: "textarea", value: details?.vision ?? "", maxLength: 3000 },
     { name: "mission", label: "Misi", type: "textarea", value: details?.mission ?? "", maxLength: 3000 },
   ];
-  return <Page title="Profil sekolah" description="Informasi organisasi untuk sekolah yang sedang aktif."><Card><div className="mb-6 flex items-center gap-4"><Avatar name={school.name} /><div><h2 className="text-xl font-semibold">{school.name}</h2><p className="muted text-sm">Logo belum diisi; menggunakan inisial sekolah.</p></div></div><dl className="grid gap-5 sm:grid-cols-2"><Info label="Slug" value={school.slug} /><Info label="Status sekolah" value={school.is_active ? "Aktif" : "Nonaktif"} />{fields.slice(1, 6).map((field) => <Info key={field.name} label={field.label} value={field.value} />)}</dl></Card>
+  return <Page breadcrumb={<SettingsBreadcrumb current="Profil sekolah" />} title="Profil sekolah" description="Informasi organisasi untuk sekolah yang sedang aktif."><Card><div className="mb-6 flex items-center gap-4"><Avatar name={school.name} /><div><h2 className="text-xl font-semibold">{school.name}</h2><p className="muted text-sm">Logo belum diisi; menggunakan inisial sekolah.</p></div></div><dl className="grid gap-5 sm:grid-cols-2"><Info label="Slug" value={school.slug} /><Info label="Status sekolah" value={school.is_active ? "Aktif" : "Nonaktif"} />{fields.slice(1, 6).map((field) => <Info key={field.name} label={field.label} value={field.value} />)}</dl></Card>
     {canManageSchool(membership.role) && details ? <Card title="Edit informasi sekolah"><SettingsForm action={saveSchool} fields={fields} /><p className="muted mt-4 text-sm">Slug, identitas tenant, dan status sekolah tidak dapat diubah dari formulir ini.</p></Card> : <Card title="Informasi sekolah"><p className="muted">{!details ? "Pengaturan profil sekolah belum tersedia. Hubungi pengelola aplikasi untuk mengaktifkannya." : "Anda memiliki akses baca. Perubahan profil sekolah dilakukan oleh super admin atau kepala sekolah."}</p></Card>}
   </Page>;
 }

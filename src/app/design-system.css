@@ -96,3 +96,17 @@ label:has(+ .ui-checkbox) { min-height: 2.75rem; display: flex; align-items: cen
 .users-list form > * { min-width: 0; overflow-wrap: anywhere; }
 .users-list button, .users-list select { min-height: 2.75rem; font-size: var(--text-small); }
 .users-list select { max-width: 100%; }
+
+/* F3 shell: shared spacing and readable context at narrow widths. */
+.shell-brand { display: block; padding-block: .5rem; min-height: 2.75rem; font-size: 1rem; font-weight: 600; overflow-wrap: anywhere; }
+.shell-nav-link { display: block; min-height: 2.75rem; padding: .75rem 1rem; border-radius: var(--radius-control); font-size: var(--text-small); font-weight: 500; overflow-wrap: anywhere; }
+.shell-account-panel { width: 17rem; max-width: calc(100vw - 2rem); max-height: calc(100dvh - 8rem); overflow-y: auto; }
+.shell-header, .shell-school-context, .shell-drawer { overflow-wrap: anywhere; }
+.shell-header > div { min-width: 0; gap: .75rem; }
+.shell-school-context form > div { flex-basis: 12rem; }
+.shell-drawer { overscroll-behavior: contain; }
+.shell-breadcrumb { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem .5rem; }
+.shell-breadcrumb li { display: flex; align-items: center; gap: .5rem; min-width: 0; }
+.shell-breadcrumb a { display: inline-flex; align-items: center; min-height: 2.75rem; text-decoration: underline; text-underline-offset: .2em; }
+.shell-breadcrumb [aria-current="page"] { font-weight: 600; }
+.dashboard-shell .nav-link[aria-current="location"] { border-left: 3px solid currentColor; }

@@ -69,7 +69,7 @@ a {
 .dashboard-shell .muted { color: var(--shell-muted); }
 .dashboard-shell :where(.border, .border-b, .border-r, .border-l-2, .divide-y > *) { border-color: var(--shell-line); }
 .dashboard-shell .notice { background: var(--shell-notice); }
-.dashboard-shell .nav-link:not([aria-current="page"]):hover { background: var(--shell-notice); }
+.dashboard-shell .nav-link:not([aria-current]):hover { background: var(--shell-notice); }
 .dashboard-shell :where(a, button, input, select, textarea, summary):focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 3px; }
 
 .dashboard-shell .field.pr-24 { padding-right: 6rem; }
