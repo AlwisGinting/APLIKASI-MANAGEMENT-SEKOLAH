@@ -11,9 +11,9 @@ import { renderToStaticMarkup } from 'react-dom/server';
 
 const require = createRequire(import.meta.url);
 const context = { user: { id: 'test', email: 'pengguna@example.invalid' }, profile: { full_name: 'Pengguna Sekolah dengan Nama Panjang' }, membership: { status: 'active', role: null }, school: { name: 'KB DEVFANTA MELATI' }, details: {}, academicYear: null, semester: null };
-function load(file, mocks = {}) {
+function load(file, mocks = {}, globals = {}) {
   const loaded = { exports: {} };
-  const source = ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const source = ts.transpileModule(fs.readFileSync(file, 'utf8'), { fileName: file, compilerOptions: { module: ts.ModuleKind.CommonJS, ...(file.endsWith('.tsx') ? { jsx: ts.JsxEmit.ReactJSX } : {}), target: ts.ScriptTarget.ES2022 } }).outputText;
   const resolve = id => {
     if (Object.hasOwn(mocks, id)) return mocks[id];
     if (id === 'next/link') return { default: ({ children, ...props }) => React.createElement('a', props, children) };
@@ -26,11 +26,11 @@ function load(file, mocks = {}) {
       const base = id.startsWith('@/') ? `src/${id.slice(2)}` : path.resolve(path.dirname(file), id);
       const target = [base, `${base}.tsx`, `${base}.ts`, `${base}/index.tsx`].find(p => fs.existsSync(p) && fs.statSync(p).isFile());
       if (target?.endsWith('.json')) return { default: JSON.parse(fs.readFileSync(target, 'utf8')) };
-      if (target) return load(target, mocks);
+      if (target) return load(target, mocks, globals);
     }
     return require(id);
   };
-  vm.runInNewContext(source, { module: loaded, exports: loaded.exports, require: resolve, process: { env: {} }, URL, URLSearchParams, setTimeout, clearTimeout }, { filename: file });
+  vm.runInNewContext(source, { module: loaded, exports: loaded.exports, require: resolve, process: { env: {} }, URL, URLSearchParams, setTimeout, clearTimeout, ...globals }, { filename: file });
   return loaded.exports;
 }
 const ui = load('src/components/ui/index.tsx');
@@ -55,9 +55,124 @@ test('field associates label, description and error with the input', () => {
   assert.match(html, /aria-invalid="true"/);
   assert.match(html, /id="email-error"/);
 });
+test('F5 fields expose required, validation, descriptions and accessible error feedback', () => {
+  const html = render(ui.Field, { id: 'amount', label: 'Jumlah', required: true, error: 'Angka tidak valid.', children: props => h(ui.Input, { ...props, name: 'amount', type: 'number' }) });
+  assert.match(html, /Jumlah<span> \(wajib\)<\/span>/);
+  assert.match(html, /required=""/);
+  assert.match(html, /aria-invalid="true"/);
+  assert.match(html, /aria-describedby="amount-error"/);
+  const feedback = load('src/components/forms/form-feedback.tsx');
+  const errors = { status: 'validation', message: 'Periksa isian.', fieldErrors: { amount: ['Angka tidak valid.'], unknown: ['Jangan tampilkan'] } };
+  const summary = renderToStaticMarkup(h(feedback.FormFeedback, { result: errors, fields: { amount: { id: 'amount', label: 'Jumlah' } } }));
+  assert.match(summary, /role="alert"/);
+  assert.match(summary, /href="#amount"/);
+  assert.doesNotMatch(summary, /Jangan tampilkan|unknown/);
+  const success = renderToStaticMarkup(h(feedback.FormFeedback, { result: { status: 'success', message: 'Data berhasil disimpan.' }, fields: {} }));
+  assert.match(success, /role="status"/);
+});
 test('alerts announce errors urgently and informational results politely', () => {
   assert.match(render(ui.Alert, { tone: 'destructive', children: 'Coba lagi' }), /role="alert"/);
   assert.match(render(ui.Alert, { tone: 'success', children: 'Tersimpan' }), /role="status"/);
+});
+
+test('F5 server composer is pending-safe, responsive, and action results never expose exception details', () => {
+  const { RecordForm } = load('src/components/forms/record-form.tsx');
+  const action = async () => { throw new Error('PRIVATE_DATABASE_DETAIL'); };
+  const html = renderToStaticMarkup(h(RecordForm, {
+    action, fields: { name: { id: 'name', label: 'Nama' } }, dirtyFields: ['name'],
+    children: () => h(ui.Field, { id: 'name', label: 'Nama', children: props => h(ui.Input, { ...props, name: 'name', defaultValue: 'Contoh' }) }),
+  }));
+  assert.match(html, /method="post"/);
+  assert.match(html, /aria-busy="false"/);
+  assert.match(html, /<fieldset[^>]*disabled=""/);
+  assert.match(html, /Aktifkan JavaScript/);
+  assert.match(html, /Reset perubahan/);
+  assert.doesNotMatch(html, /PRIVATE_DATABASE_DETAIL/);
+  const css = fs.readFileSync('src/app/design-system.css', 'utf8');
+  assert.match(css, /\.record-form, \.form-fields[^\{]*\{[^}]*min-width: 0[^}]*max-width: 100%/s);
+  assert.match(css, /\.form-actions[^\{]*\{[^}]*flex-wrap: wrap/s);
+  assert.match(css, /\.form-error-summary a[^\{]*\{[^}]*min-height: 2\.75rem/s);
+  const source = fs.readFileSync('src/components/forms/record-form.tsx', 'utf8');
+  assert.match(source, /gate\.current\.enter\(\)/);
+  assert.match(source, /finally \{ clearSensitiveControls\(element\); gate\.current\.leave\(\); setPending\(false\); \}/);
+  assert.match(source, /window\.addEventListener\("beforeunload"/);
+  assert.match(source, /window\.confirm\("Perubahan belum disimpan/);
+  assert.match(source, /if \(next\.status === "success"\)/);
+  assert.match(source, /catch \{ setResult\(mutationFailure\(\)\); \}/);
+});
+
+test('F5 parser normalizes text and email without inventing local-part rules', () => {
+  const form = load('src/lib/form-engine.ts');
+  assert.equal(form.normalText('  Nama  '), 'Nama');
+  assert.equal(form.optionalText('  '), null);
+  assert.equal(form.normalizeEmail('  Some.User+tag@EXAMPLE.INVALID  '), 'Some.User+tag@example.invalid');
+  assert.equal(form.readSingleText(new FormData(), 'name').value, null);
+  const repeated = new FormData(); repeated.append('name', 'a'); repeated.append('name', 'b');
+  assert.equal(form.readSingleText(repeated, 'name').ok, false);
+  const file = new FormData(); file.append('name', new Blob(['x']), 'x.txt');
+  assert.equal(form.readSingleText(file, 'name').ok, false);
+});
+
+test('F5 number and date parsing rejects invalid, overflowing, and silently rounded data', () => {
+  const form = load('src/lib/form-engine.ts');
+  assert.deepEqual(JSON.parse(JSON.stringify(form.parseNumber(null))), { ok: true, value: null });
+  assert.equal(form.parseNumber('  ').value, null);
+  assert.equal(form.parseNumber('.5').value, 0.5);
+  assert.equal(form.parseNumber('-0.125').value, -0.125);
+  assert.equal(form.parseNumber('1e3').ok, false);
+  assert.equal(form.parseNumber('Infinity').ok, false);
+  assert.equal(form.parseNumber('9007199254740992').ok, false);
+  assert.equal(form.parseNumber('9007199254740990.5').ok, false);
+  assert.equal(form.parseNumber('0.100000000000000000001').ok, false);
+  assert.equal(form.parseCalendarDate('2024-02-29').value, '2024-02-29');
+  assert.equal(form.parseCalendarDate('2025-02-29').ok, false);
+  assert.equal(form.parseCalendarDate('  ').value, null);
+  assert.equal(form.parseCalendarDate('2024-02-29T00:00:00Z').ok, false);
+  assert.equal(form.parseCheckbox(new FormData(), 'active').value, false);
+  const checked = new FormData(); checked.set('active', 'on');
+  assert.equal(form.parseCheckbox(checked, 'active').value, true);
+  checked.set('active', 'true');
+  assert.equal(form.parseCheckbox(checked, 'active').ok, false);
+});
+
+test('F5 validation and mutation contracts return only safe typed feedback', () => {
+  const form = load('src/lib/form-engine.ts');
+  const invalid = form.validated(null, { date: ['Tanggal tidak valid.'] }, 'Periksa tanggal.');
+  assert.deepEqual(JSON.parse(JSON.stringify(form.mutationInvalid(invalid))), {
+    status: 'validation', message: 'Periksa tanggal.', fieldErrors: { date: ['Tanggal tidak valid.'] },
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(form.mutationFailure())), {
+    status: 'error', message: 'Data belum dapat disimpan. Silakan coba kembali.',
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(form.mutationSuccess())), {
+    status: 'success', message: 'Data berhasil disimpan.',
+  });
+  assert.doesNotMatch(JSON.stringify([invalid, form.mutationFailure()]), /PRIVATE|password|token|stack/i);
+});
+
+test('F5 dirty snapshots exclude sensitive controls and reset defaults track successful saves', () => {
+  class Input { constructor(name, type, value, extra = {}) { Object.assign(this, { name, type, value, checked: false, defaultValue: '', defaultChecked: false, disabled: false, autocomplete: '', attrs: new Set(), ...extra }); } hasAttribute(name) { return this.attrs.has(name); } }
+  class TextArea { constructor(name, value, extra = {}) { Object.assign(this, { name, value, defaultValue: '', disabled: false, autocomplete: '', attrs: new Set(), ...extra }); } hasAttribute(name) { return this.attrs.has(name); } }
+  class Select { constructor(name, value, options = [], extra = {}) { Object.assign(this, { name, value, options, disabled: false, attrs: new Set(), ...extra }); } hasAttribute(name) { return this.attrs.has(name); } }
+  const helpers = load('src/lib/form-interaction.ts', {}, { HTMLInputElement: Input, HTMLTextAreaElement: TextArea, HTMLSelectElement: Select });
+  const name = new Input('name', 'text', 'Alice');
+  const active = new Input('active', 'checkbox', '', { checked: true });
+  const password = new Input('password', 'password', 'do-not-snapshot', { autocomplete: 'current-password' });
+  const secret = new Input('secret', 'text', 'do-not-snapshot', { attrs: new Set(['data-sensitive']) });
+  const date = new Input('date', 'date', '2026-10-01');
+  const ignored = new Input('other', 'text', 'ignored');
+  const form = { elements: [name, active, password, secret, date, ignored] };
+  const fields = ['name', 'active', 'password', 'secret', 'date'];
+  const initial = helpers.formSnapshot(form, fields);
+  assert.doesNotMatch(initial, /do-not-snapshot|password|secret/);
+  name.value = 'Changed'; assert.notEqual(helpers.formSnapshot(form, fields), initial);
+  helpers.acceptFormDefaults(form, fields); const accepted = helpers.formSnapshot(form, fields);
+  name.value = 'Other'; assert.notEqual(helpers.formSnapshot(form, fields), accepted);
+  helpers.clearSensitiveControls(form);
+  assert.equal(password.value, ''); assert.equal(secret.value, ''); assert.equal(name.value, 'Other');
+  const gate = helpers.submissionGate(); assert.equal(gate.enter(), true); assert.equal(gate.enter(), false); gate.leave(); assert.equal(gate.enter(), true);
+  let prevented = false; const unload = { preventDefault() { prevented = true; }, returnValue: 'old' };
+  helpers.warnBeforeUnload(unload); assert.equal(prevented, true); assert.equal(unload.returnValue, '');
 });
 test('auth states retain distinct copy and redirect active/basic accounts', async () => {
   for (const [state, text] of [['pending', 'Menunggu persetujuan'], ['rejected', 'Permintaan akses belum disetujui'], ['suspended', 'Akses dinonaktifkan'], ['no_membership', 'Akses sekolah belum tersedia']]) {

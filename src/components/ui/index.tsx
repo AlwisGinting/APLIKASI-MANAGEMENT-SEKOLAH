@@ -14,9 +14,9 @@ export function Label({ className, ...props }: ComponentProps<"label">) { return
 export function FieldError({ id, children }: { id: string; children?: ReactNode }) { return children ? <p id={id} className="ui-field-error">{children}</p> : null; }
 export function FieldDescription({ id, children }: { id: string; children: ReactNode }) { return <p id={id} className="muted mt-2 text-sm">{children}</p>; }
 // Controls receive this object explicitly so labels, descriptions and errors stay linked.
-export function Field({ id, label, description, error, children }: { id: string; label: string; description?: string; error?: string; children: (props: { id: string; "aria-invalid": boolean; "aria-describedby": string | undefined }) => ReactNode }) {
+export function Field({ id, label, description, error, required, children }: { id: string; label: string; description?: string; error?: string; required?: boolean; children: (props: { id: string; required?: boolean; "aria-invalid": boolean; "aria-describedby": string | undefined }) => ReactNode }) {
   const described = [description && `${id}-description`, error && `${id}-error`].filter(Boolean).join(" ") || undefined;
-  return <div className="min-w-0"><Label htmlFor={id}>{label}</Label>{children({ id, "aria-invalid": Boolean(error), "aria-describedby": described })}{description && <FieldDescription id={`${id}-description`}>{description}</FieldDescription>}<FieldError id={`${id}-error`}>{error}</FieldError></div>;
+  return <div className="min-w-0"><Label htmlFor={id}>{label}{required && <span> (wajib)</span>}</Label>{children({ id, required, "aria-invalid": Boolean(error), "aria-describedby": described })}{description && <FieldDescription id={`${id}-description`}>{description}</FieldDescription>}<FieldError id={`${id}-error`}>{error}</FieldError></div>;
 }
 export function Card({ title, children, className }: { title?: string; children: ReactNode; className?: string }) { return <section className={cx("ui-card", className)}>{title && <h2 className="mb-4 text-lg font-semibold">{title}</h2>}{children}</section>; }
 export function Badge({ tone = "neutral", children }: { tone?: Tone; children: ReactNode }) { return <span className={`ui-badge ui-tone-${tone}`}>{children}</span>; }

@@ -640,7 +640,7 @@ test('System page is allowlisted, super-admin-only, and has no execution surface
   for (const status of ['pending', 'rejected', 'suspended']) assert.equal(capabilities.hasCapability({ membership: { role: 'super_admin', status } }, 'system.read'), false);
   const sourceFiles = fs.readdirSync('src', { recursive: true }).filter((file) => /\.(ts|tsx)$/.test(file));
   const source = sourceFiles.map((file) => fs.readFileSync(`src/${file}`, 'utf8')).join('\n');
-  assert.doesNotMatch(source, /child_process|spawn\(|exec\(/i);
+  assert.doesNotMatch(source, /child_process|spawn\s*\(|(?<![.\w])exec\s*\(/i);
   assert.doesNotMatch(source, /localStorage|indexedDB|Cache API/i);
 });
 

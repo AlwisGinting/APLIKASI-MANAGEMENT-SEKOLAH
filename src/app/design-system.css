@@ -124,3 +124,11 @@ label:has(+ .ui-checkbox) { min-height: 2.75rem; display: flex; align-items: cen
 .data-toolbar .field { max-width: 100%; }
 .data-filter-status { flex-basis: 100%; }
 .data-pagination { align-items: center; }
+
+/* F5 composes existing fields; no separate control theme. */
+.record-form, .form-fields { display: grid; gap: 1.25rem; min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.form-actions { display: flex; flex-wrap: wrap; gap: .75rem; }
+.form-error-summary { padding-left: 1.25rem; list-style: disc; }
+.form-error-summary a { display: inline-flex; align-items: center; min-height: 2.75rem; text-decoration: underline; overflow-wrap: anywhere; }
+.form-fields .ui-checkbox { vertical-align: middle; }
+.form-fields label:has(+ .ui-checkbox) { min-height: 2.75rem; }
