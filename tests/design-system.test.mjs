@@ -602,3 +602,95 @@ test('F4 isolated reference composes server-sized records with reusable controls
   preview('f4-data',html,true);
   for (const state of ['loading','empty','no-results','error']) preview(`f4-${state}`,render(dataUI.DataFeedback,{state}),true);
 });
+
+test('F6.5A toast foundation bounds items, sanitizes sensitive tokens, and supports dismiss', () => {
+  const toastLib = load('src/lib/toast.ts');
+  toastLib.clearToasts();
+  assert.equal(toastLib.getToasts().length, 0);
+
+  // Add multiple toasts beyond bound (MAX_TOASTS = 4)
+  const id1 = toastLib.toast.info('Pesan 1');
+  toastLib.toast.success('Pesan 2');
+  toastLib.toast.warning('Pesan 3');
+  toastLib.toast.error('Pesan 4');
+  const id5 = toastLib.toast.info('Pesan 5');
+
+  const active = toastLib.getToasts();
+  assert.equal(active.length, 4);
+  assert.equal(active[active.length - 1].message, 'Pesan 5');
+  assert.ok(!active.some(t => t.id === id1));
+
+  // Sensitive error message sanitization
+  toastLib.toast.error('SQL error: column password failed constraint');
+  const sanitized = toastLib.getToasts();
+  assert.equal(sanitized[sanitized.length - 1].message, 'Terjadi kesalahan pada sistem. Silakan coba kembali.');
+
+  // Manual dismissal
+  toastLib.dismissToast(id5);
+  assert.ok(!toastLib.getToasts().some(t => t.id === id5));
+
+  toastLib.clearToasts();
+  assert.equal(toastLib.getToasts().length, 0);
+});
+
+test('F6.5A confirm dialog renders accessible alertdialog semantics and action controls', () => {
+  const confirmUI = load('src/components/ui/confirm-dialog.tsx');
+  const html = render(confirmUI.ConfirmDialog, {
+    isOpen: true,
+    title: 'Hapus Tahun Ajaran',
+    message: 'Apakah Anda yakin ingin menghapus data ini?',
+    confirmLabel: 'Hapus Data',
+    cancelLabel: 'Batalkan',
+    onConfirm: () => {},
+    onCancel: () => {},
+  });
+  assert.match(html, /role="alertdialog"/);
+  assert.match(html, /aria-modal="true"/);
+  assert.match(html, /aria-labelledby="confirm-dialog-title"/);
+  assert.match(html, /aria-describedby="confirm-dialog-description"/);
+  assert.match(html, /Hapus Tahun Ajaran/);
+  assert.match(html, /Hapus Data/);
+  assert.match(html, /Batalkan/);
+
+  // Closed dialog renders nothing
+  const closedHtml = render(confirmUI.ConfirmDialog, {
+    isOpen: false,
+    title: 'Tutup',
+    message: 'Tidak tampil',
+    onConfirm: () => {},
+    onCancel: () => {},
+  });
+  assert.equal(closedHtml, '');
+});
+
+test('F6.5A FormSubmit provides immediate pending feedback and prevents duplicate submit', () => {
+  const formFeedbackUI = load('src/components/forms/form-feedback.tsx');
+  const idle = render(formFeedbackUI.FormSubmit, { children: 'Simpan Data' });
+  assert.match(idle, /type="submit"/);
+  assert.match(idle, /Simpan Data/);
+  assert.doesNotMatch(idle, /disabled=""/);
+
+  const pending = render(formFeedbackUI.FormSubmit, { pending: true, pendingText: 'Menyimpan...', children: 'Simpan Data' });
+  assert.match(pending, /disabled=""/);
+  assert.match(pending, /aria-busy="true"/);
+  assert.match(pending, /Menyimpan\.\.\./);
+  assert.doesNotMatch(pending, /Simpan Data/);
+});
+
+test('F6.5A loading skeletons provide accessible aria-busy semantics without fake data', () => {
+  const masterLoading = render(load('src/app/dashboard/master/loading.tsx').default, {});
+  assert.match(masterLoading, /aria-busy="true"/);
+  assert.match(masterLoading, /ui-skeleton/);
+
+  const academicLoading = render(load('src/app/dashboard/master/academic-years/loading.tsx').default, {});
+  assert.match(academicLoading, /aria-busy="true"/);
+  assert.match(academicLoading, /ui-skeleton/);
+
+  const usersLoading = render(load('src/app/dashboard/users/loading.tsx').default, {});
+  assert.match(usersLoading, /aria-busy="true"/);
+  assert.doesNotMatch(usersLoading, /@example\.com|admin|super_admin/);
+
+  const activityLoading = render(load('src/app/dashboard/activity/loading.tsx').default, {});
+  assert.match(activityLoading, /aria-busy="true"/);
+  assert.match(activityLoading, /Riwayat perubahan sekolah/);
+});

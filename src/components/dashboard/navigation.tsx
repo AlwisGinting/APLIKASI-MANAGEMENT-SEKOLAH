@@ -17,6 +17,28 @@ export function Navigation({ name, school, role }: { name: string; school: strin
   const [open, setOpen] = useState(false);
   const groups = navigationForRole(role);
   const selectedHref = activeNavigationHref(pathname, groups.flatMap(group => group.items));
+
+  const toggleMobile = () => {
+    const dialog = mobile.current;
+    if (!dialog) return;
+    if (dialog.open) {
+      dialog.close();
+    } else {
+      dialog.showModal();
+      setOpen(true);
+    }
+  };
+
+  useEffect(() => {
+    const handleOutsideClick = (event: MouseEvent) => {
+      if (userMenu.current?.open && !userMenu.current.contains(event.target as Node)) {
+        userMenu.current.open = false;
+      }
+    };
+    document.addEventListener("click", handleOutsideClick);
+    return () => document.removeEventListener("click", handleOutsideClick);
+  }, []);
+
   useEffect(() => {
     mobile.current?.close();
     if (userMenu.current) userMenu.current.open = false;
@@ -44,8 +66,27 @@ export function Navigation({ name, school, role }: { name: string; school: strin
     <aside aria-label="Navigasi utama desktop" className="surface fixed inset-y-0 left-0 z-30 hidden w-60 overflow-y-auto border-r p-5 lg:block"><p className="muted text-xs">Aplikasi</p><Link href={R.dashboard} className="shell-brand">{APP_CONFIG.name}</Link><div className="my-5 border-b pb-4"><p className="muted text-xs">Sekolah aktif</p><p className="mt-1 break-words text-sm">{school}</p></div>{links}</aside>
     <header className="surface shell-header sticky top-0 z-30 border-b px-4 py-3 sm:px-7">
       <div className="flex items-center justify-between gap-4">
-        <button ref={mobileTrigger} type="button" aria-label="Buka navigasi" aria-expanded={open} aria-haspopup="dialog" aria-controls="mobile-navigation" onClick={() => { mobile.current?.showModal(); setOpen(true); }} className="ui-button ui-button-outline shrink-0 lg:hidden">Menu</button>
-        <dialog ref={mobile} id="mobile-navigation" aria-labelledby="mobile-navigation-title" onClose={() => { setOpen(false); if (mobileTrigger.current?.getClientRects().length) mobileTrigger.current.focus(); }} className="surface shell-drawer fixed inset-y-0 left-0 right-auto m-0 h-dvh max-h-none w-72 max-w-[90vw] overflow-y-auto border-r p-4 text-inherit shadow-xl backdrop:bg-black/40">
+        <button ref={mobileTrigger} type="button" aria-label="Buka navigasi" aria-expanded={open} aria-haspopup="dialog" aria-controls="mobile-navigation" onClick={toggleMobile} className="ui-button ui-button-outline shrink-0 lg:hidden">Menu</button>
+        <dialog
+          ref={mobile}
+          id="mobile-navigation"
+          aria-labelledby="mobile-navigation-title"
+          onClick={(event) => {
+            const dialog = mobile.current;
+            if (!dialog) return;
+            const rect = dialog.getBoundingClientRect();
+            const clickedOutside =
+              event.clientX < rect.left ||
+              event.clientX > rect.right ||
+              event.clientY < rect.top ||
+              event.clientY > rect.bottom;
+            if (clickedOutside) {
+              dialog.close();
+            }
+          }}
+          onClose={() => { setOpen(false); if (mobileTrigger.current?.getClientRects().length) mobileTrigger.current.focus(); }}
+          className="surface shell-drawer fixed inset-y-0 left-0 right-auto m-0 h-dvh max-h-none w-72 max-w-[90vw] overflow-y-auto border-r p-4 text-inherit shadow-xl backdrop:bg-black/40"
+        >
           <div className="mb-6 flex items-start justify-between gap-3"><h2 id="mobile-navigation-title" className="font-semibold">Navigasi aplikasi</h2><button type="button" aria-label="Tutup navigasi" onClick={() => mobile.current?.close()} className="min-h-11 min-w-11 rounded-lg text-xl">×</button></div><p className="muted text-xs">Aplikasi</p><Link href={R.dashboard} onClick={() => mobile.current?.close()} className="shell-brand">{APP_CONFIG.name}</Link><div className="my-5 border-b pb-4"><p className="muted text-xs">Sekolah aktif</p><p className="mt-1 break-words text-sm">{school}</p></div>{links}
         </dialog>
         <p className="muted hidden truncate text-sm lg:block">{APP_CONFIG.name}</p>
