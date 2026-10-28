@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Button, EmptyState, ErrorState, Input, Label, Select, Skeleton } from "@/components/ui";
 import { hasDataFilters, MAX_PAGE, PAGE_SIZES, queryHref, type DataQuery, type FilterDefinition } from "@/lib/data-query";
+import { SearchInputEnhancer } from "@/components/data/search-input";
 
 export type DataColumn<Row> = {
   id: string; header: string; cell: (row: Row) => ReactNode;
@@ -27,12 +28,14 @@ export function DataTable<Row>({ caption, rows, columns, rowKey, query, actions 
   </div>;
 }
 
-// Native GET submission works without hydration, debouncing or per-key requests.
-// Give each toolbar a unique id. Changing controls intentionally resets page.
+// Native GET submission works without hydration for filter/sort/page interactions.
+// The search input is SSR'd as a plain HTML element; SearchInputEnhancer attaches
+// a ~300 ms debounced input listener on the client side (progressive enhancement).
 export function DataToolbar({ id, query, filters = [] }: { id: string; query: DataQuery; filters?: readonly FilterDefinition[] }) {
   return <form method="get" className="data-toolbar" role="search" aria-label="Cari dan saring data">
     <input type="hidden" name="page" value="1" /><input type="hidden" name="sort" value={query.sort} /><input type="hidden" name="direction" value={query.direction} />
     <div><Label htmlFor={`${id}-q`}>Cari data</Label><Input id={`${id}-q`} name="q" type="search" maxLength={200} defaultValue={query.q} placeholder="Masukkan kata pencarian" /></div>
+    <SearchInputEnhancer inputId={`${id}-q`} />
     {filters.map(filter => <div key={filter.key}><Label htmlFor={`${id}-${filter.key}`}>{filter.label}</Label><Select id={`${id}-${filter.key}`} name={`filter.${filter.key}`} defaultValue={query.filters[filter.key] ?? ""}><option value="">Semua</option>{filter.options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</Select></div>)}
     <div><Label htmlFor={`${id}-size`}>Baris per halaman</Label><Select id={`${id}-size`} name="pageSize" defaultValue={query.pageSize}>{PAGE_SIZES.map(size => <option key={size} value={size}>{size}</option>)}</Select></div>
     <Button type="submit">Terapkan</Button><a className="ui-button ui-button-outline" href={queryHref(query, { page: 1, q: "", filters: {} })}>Hapus pencarian dan filter</a>

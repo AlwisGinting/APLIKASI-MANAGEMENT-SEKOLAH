@@ -17,7 +17,8 @@ export async function saveProfile(_previous: SettingsState, data: FormData): Pro
   if (Object.keys(fieldErrors).length) return { success: false, message: "Periksa isian profil Anda.", fieldErrors };
   const { data: saved, error } = await context.supabase.from("profiles").update({ ...payload, updated_at: new Date().toISOString() }).eq("id", context.user.id).select("id").maybeSingle();
   if (error || !saved) return failed;
-  revalidatePath(R.dashboard, "layout");
+  // Profile name appears in the nav — revalidate the layout segment that contains it.
+  revalidatePath("/dashboard", "layout");
   return { success: true, message: "Profil berhasil diperbarui." };
 }
 
@@ -29,7 +30,8 @@ export async function saveSchool(_previous: SettingsState, data: FormData): Prom
   if (!details) return { success: false, message: "Pengaturan profil sekolah belum tersedia. Hubungi pengelola aplikasi." };
   const { data: saved, error } = await context.supabase.from("schools").update(payload).eq("id", context.membership.school_id).select("id").maybeSingle();
   if (error || !saved) return failed;
-  revalidatePath(R.dashboard, "layout");
+  // School name appears in the nav; narrow to layout for nav refresh + school settings page.
+  revalidatePath("/dashboard", "layout");
   return { success: true, message: "Profil sekolah berhasil diperbarui." };
 }
 

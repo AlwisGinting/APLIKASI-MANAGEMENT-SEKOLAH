@@ -9,8 +9,7 @@ import { NavigationProgress } from "@/components/dashboard/navigation-progress";
 import { ToastContainer } from "@/components/ui/toast";
 
 export default async function DashboardLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  const context = await getAcademicContext();
-  const store = await cookies();
+  const [context, store] = await Promise.all([getAcademicContext(), cookies()]);
   const value = store.get("school-ui-theme")?.value;
   const theme = value === "light" || value === "dark" ? value : "system";
   return <div className="dashboard-shell min-h-dvh lg:pl-60" data-theme={theme} data-compact={store.get("school-ui-compact")?.value === "true" ? "true" : "false"}>

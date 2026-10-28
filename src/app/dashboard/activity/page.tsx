@@ -8,8 +8,12 @@ import { Page, Card } from "@/components/dashboard/ui";
 export default async function ActivityPage() {
   const context = await requireCapability("activity.read");
   const { user, profile, membership } = context;
-  const audit = hasCapability(context, "audit.read") ? await getTenantAudit() : null;
-  const feedback = await getOwnFeedback();
+  // Independent queries — fire concurrently. Both internally use React.cache,
+  // so auth/context lookups are deduplicated within this request.
+  const [audit, feedback] = await Promise.all([
+    hasCapability(context, "audit.read") ? getTenantAudit() : Promise.resolve(null),
+    getOwnFeedback(),
+  ]);
   const events = [
     { id: "created", label: "Akun dibuat", at: user.created_at },
     ...(user.last_sign_in_at ? [{ id: "login", label: "Login terakhir yang tercatat", at: user.last_sign_in_at }] : []),

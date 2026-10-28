@@ -5,8 +5,7 @@ import { APP_CONFIG } from "@/config/app";
 import { Page, Card, Avatar, Info, TenantContext, QuickLink } from "@/components/dashboard/ui";
 const R = APP_CONFIG.routes;
 export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
-  const context = await getAcademicContext();
-  const params = await searchParams;
+  const [context, params] = await Promise.all([getAcademicContext(), searchParams]);
   const canReadAcademic = hasCapability(context, "academic.read");
   const academicYear = canReadAcademic ? context.academicYear?.name ?? "Belum ada tahun ajaran aktif" : "Tidak tersedia untuk role Anda";
   const semester = canReadAcademic ? context.semester?.name ?? "Belum ada semester aktif" : "Tidak tersedia untuk role Anda";

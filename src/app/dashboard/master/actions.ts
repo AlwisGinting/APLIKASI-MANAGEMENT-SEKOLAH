@@ -60,7 +60,7 @@ export async function deleteAcademicYear(formData: FormData) {
   if ((semesterCount ?? 0) > 0 || (classroomCount ?? 0) > 0) redirectError(YEAR_PATH, "has-children");
   const { data: deleted, error } = await context.supabase.from("academic_years").delete().eq("id", id).eq("school_id", context.membership.school_id).select("id").maybeSingle();
   if (error || !deleted) redirectError(YEAR_PATH, "delete");
-  revalidatePath("/dashboard", "layout"); revalidatePath(YEAR_PATH); redirect(`${YEAR_PATH}?success=deleted`);
+  revalidatePath(YEAR_PATH); redirect(`${YEAR_PATH}?success=deleted`);
 }
 
 export async function saveSemester(formData: FormData) {
@@ -88,7 +88,7 @@ export async function deleteSemester(formData: FormData) {
   const id = value(formData, "id"); if (!id) redirectError(SEMESTER_PATH, "validation");
   const { data: deleted, error } = await context.supabase.from("semesters").delete().eq("id", id).eq("school_id", context.membership.school_id).select("id").maybeSingle();
   if (error || !deleted) redirectError(SEMESTER_PATH, "delete");
-  revalidatePath("/dashboard", "layout"); revalidatePath(SEMESTER_PATH); redirect(`${SEMESTER_PATH}?success=deleted`);
+  revalidatePath(SEMESTER_PATH); redirect(`${SEMESTER_PATH}?success=deleted`);
 }
 
 export async function saveClassroom(formData: FormData) {

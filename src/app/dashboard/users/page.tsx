@@ -34,18 +34,21 @@ export default async function UsersPage({ searchParams }: Props) {
     .order("created_at", { ascending: false });
   if (membershipsError) throw new Error(USER_MESSAGES.SERVICE_UNAVAILABLE);
   const userIds = (memberships ?? []).map((item) => item.user_id);
-  const { data: profiles, error: profilesError } = userIds.length
-    ? await context.supabase.from("profiles").select("id, full_name").in("id", userIds)
-    : { data: [], error: null };
-  if (profilesError) throw new Error(USER_MESSAGES.SERVICE_UNAVAILABLE);
-  const profileMap = new Map((profiles ?? []).map((profile) => [profile.id, profile.full_name]));
-  let emailMap = new Map<string, string>();
-  let emailLookupFailed = false;
-  try {
-    emailMap = await getAuthEmails(userIds);
-  } catch {
-    emailLookupFailed = true;
-  }
+  const [profilesRes, emailsRes] = await Promise.all([
+    userIds.length
+      ? context.supabase.from("profiles").select("id, full_name").in("id", userIds)
+      : Promise.resolve({ data: [] as Array<{ id: string; full_name: string }>, error: null }),
+    userIds.length
+      ? getAuthEmails(userIds).then(
+          (map) => ({ emailMap: map, failed: false }),
+          () => ({ emailMap: new Map<string, string>(), failed: true }),
+        )
+      : Promise.resolve({ emailMap: new Map<string, string>(), failed: false }),
+  ]);
+  if (profilesRes.error) throw new Error(USER_MESSAGES.SERVICE_UNAVAILABLE);
+  const profileMap = new Map((profilesRes.data ?? []).map((profile) => [profile.id, profile.full_name]));
+  const emailMap = emailsRes.emailMap;
+  const emailLookupFailed = emailsRes.failed;
 
   return (
     <Page title="Kelola pengguna" description="Setujui akun dan tetapkan peran sesuai kebutuhan sekolah.">
