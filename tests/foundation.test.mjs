@@ -1600,3 +1600,392 @@ test('009 source contract uses deferred Auth identity admission and preserves ex
   assert.match(sql, /as restrictive for all to authenticated/);
   assert.match(sql, /revoke all on function public.activate_academic_year.*from public, anon/);
 });
+
+test('010 static security: validates storage hardening policies, explicit mutation denial, and recursion safety', () => {
+  const sql = fs.readFileSync('supabase/migrations/202610290010_storage_avatar_hardening.sql', 'utf8');
+
+  // Preflight and legacy policy cleanup
+  assert.match(sql, /lock table storage.objects in share row exclusive mode/);
+  assert.match(sql, /010 requires review of unknown Storage policies/);
+  for (const prefix of ['tenant members', 'active tenant members']) {
+    for (const verb of ['read', 'upload', 'update', 'delete']) {
+      assert.ok(sql.includes(`drop policy if exists "${prefix} can ${verb} private files" on storage.objects;`));
+    }
+  }
+
+  // Bucket validation without bucket mutation
+  assert.match(sql, /010 requires all four standard storage buckets to exist/);
+  assert.match(sql, /010 requires all four standard storage buckets to be private/);
+  assert.doesNotMatch(sql, /update storage\.buckets|insert into storage\.buckets|delete from storage\.buckets/i);
+
+  // Recursion-safe role helper
+  assert.match(sql, /create or replace function public\.has_school_role/);
+  assert.match(sql, /security definer set search_path = pg_catalog/);
+  assert.match(sql, /m\.status = 'active'::public\.membership_status and s\.is_active/);
+
+  // Avatar authorization helper binds owner_id and canonical path
+  assert.match(sql, /create or replace function public\.can_read_own_avatar/);
+  assert.match(sql, /object_owner is distinct from auth\.uid\(\)::text/);
+  assert.match(sql, /split_part\(object_name, '\/', 3\) = auth\.uid\(\)::text/);
+  assert.match(sql, /jpg\|jpeg\|png\|webp/);
+
+  // Policies: explicit deny for UPDATE & DELETE, restrictive scope gate with check(false), only SELECT allowed
+  assert.match(sql, /create policy "010 storage scope gate" on storage\.objects\s+as restrictive for all to authenticated/);
+  assert.match(sql, /with check \(false\)/);
+  assert.match(sql, /create policy "010 storage update deny" on storage\.objects\s+as restrictive for update to authenticated\s+using \(false\)\s+with check \(false\)/);
+  assert.match(sql, /create policy "010 storage delete deny" on storage\.objects\s+as restrictive for delete to authenticated\s+using \(false\)/);
+  assert.match(sql, /create policy "010 avatars owner read" on storage\.objects\s+for select to authenticated/);
+
+  // Ensure no permissive insert/update/delete or anon policies exist
+  const policiesBlock = sql.slice(sql.indexOf('-- 5. Kebijakan RLS storage.objects'));
+  assert.doesNotMatch(policiesBlock, /create policy "[^"]+"\s+on storage\.objects\s+for (insert|update) to/);
+  assert.doesNotMatch(policiesBlock, /to anon/);
+  assert.doesNotMatch(policiesBlock, /(?:delete from|update|insert into) storage\.objects/i);
+});
+
+test("AI Center & Deployment Center: authorization and sandbox guardrails", () => {
+  // 1. Static contract verification: capabilities strictly require super_admin only
+  const capabilitiesSource = fs.readFileSync("src/lib/capabilities.ts", "utf8");
+  assert.match(capabilitiesSource, /"ai_center\.read":\s*\["super_admin"\]/);
+  assert.match(capabilitiesSource, /"ai_center\.manage":\s*\["super_admin"\]/);
+
+  // 2. Navigation config protects AI Center link with capability
+  const navSource = fs.readFileSync("src/config/navigation.ts", "utf8");
+  assert.match(navSource, /href:\s*R\.aiCenter/);
+  assert.match(navSource, /capability:\s*"ai_center\.read"/);
+
+  // 3. Server actions enforce requireCapability and role super_admin check
+  const actionsSource = fs.readFileSync("src/app/dashboard/ai-center/actions.ts", "utf8");
+  assert.match(actionsSource, /requireCapability\(capability\)/);
+  assert.match(actionsSource, /context\.role !== "super_admin"/);
+  assert.match(actionsSource, /SAYA SETUJU PROMOSI KE PRODUCTION/);
+
+  // 4. Tool sandbox allowlists and prevents command execution
+  const toolsSource = fs.readFileSync("src/lib/ai-center/tools.ts", "utf8");
+  assert.doesNotMatch(toolsSource, /child_process|spawn\s*\(|(?<![.\w])exec\s*\(/i);
+  assert.match(toolsSource, /ALLOWED_TOOL_PATHS/);
+  assert.match(toolsSource, /BLOCKED_PATH_PATTERNS/);
+
+  // 5. Deployment center has explicit preflight checks and blocking reasons
+  const depLibSource = fs.readFileSync("src/lib/ai-center/deployment.ts", "utf8");
+  assert.match(depLibSource, /checkPromotionReadiness/);
+  assert.match(depLibSource, /blockingReasons/);
+
+  // 6. Provider adapters disclaim personal accounts vs API keys and do not expose plaintext secrets
+  const providersSource = fs.readFileSync("src/lib/ai-center/providers.ts", "utf8");
+  assert.match(providersSource, /server-only/);
+  assert.match(providersSource, /tidak memberikan kuota API otomatis/i);
+});
+
+test("AI Center: role-based access control and unauthorized rejection", () => {
+  const cap = load("src/lib/capabilities.ts");
+  const testRoles = ["kepala_sekolah", "operator", "guru", "orang_tua"];
+
+  // Super admin with active status MUST have read & manage capabilities
+  assert.equal(cap.hasCapability({ membership: { status: "active", role: "super_admin" } }, "ai_center.read"), true);
+  assert.equal(cap.hasCapability({ membership: { status: "active", role: "super_admin" } }, "ai_center.manage"), true);
+
+  // All other operational roles MUST be rejected (fail-closed)
+  for (const role of testRoles) {
+    assert.equal(cap.hasCapability({ membership: { status: "active", role } }, "ai_center.read"), false, `Role ${role} should not read AI center`);
+    assert.equal(cap.hasCapability({ membership: { status: "active", role } }, "ai_center.manage"), false, `Role ${role} should not manage AI center`);
+  }
+
+  // Basic access (role === null) MUST be rejected
+  assert.equal(cap.hasCapability({ membership: { status: "active", role: null } }, "ai_center.read"), false);
+  assert.equal(cap.hasCapability({ membership: { status: "active", role: null } }, "ai_center.manage"), false);
+
+  // Non-active membership statuses MUST be rejected even for super_admin
+  for (const status of ["pending", "rejected", "suspended"]) {
+    assert.equal(cap.hasCapability({ membership: { status, role: "super_admin" } }, "ai_center.read"), false);
+    assert.equal(cap.hasCapability({ membership: { status, role: "super_admin" } }, "ai_center.manage"), false);
+  }
+});
+
+test("AI Center: secret redaction sensor neutralizes credentials, tokens, and keys", () => {
+  const tools = load("src/lib/ai-center/tools.ts", { "server-only": {} }, { process: { ...process, cwd: () => process.cwd(), env: process.env } });
+  const { redactSensitiveData } = tools;
+
+  // Supabase / JWT Token
+  const jwtSample = "token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4ifQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+  assert.equal(redactSensitiveData(jwtSample), "token=[REDACTED_JWT_TOKEN]");
+
+  // Gemini API Key
+  const geminiSample = "key AIzaSyD9xK12345678901234567890123456789 ready";
+  assert.equal(redactSensitiveData(geminiSample), "key [REDACTED_GEMINI_KEY] ready");
+
+  // Bearer Authorization Header
+  const bearerSample = "Authorization: Bearer my-custom-api-token-value-12345";
+  assert.equal(redactSensitiveData(bearerSample), "Authorization: Bearer [REDACTED_TOKEN]");
+
+  // OpenAI API Key
+  const openaiSample = "sk-proj-1234567890123456789012345678901234567890";
+  assert.equal(redactSensitiveData(openaiSample), "[REDACTED_OPENAI_KEY]");
+
+  // Anthropic API Key
+  const anthropicSample = "sk-ant-api03-1234567890123456789012345678901234567890";
+  assert.equal(redactSensitiveData(anthropicSample), "[REDACTED_ANTHROPIC_KEY]");
+
+  // GitHub Personal Access Token
+  const githubSample = "ghp_123456789012345678901234567890123456";
+  assert.equal(redactSensitiveData(githubSample), "[REDACTED_GITHUB_TOKEN]");
+
+  // Private Key Block
+  const privKeySample = "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA0\n-----END RSA PRIVATE KEY-----";
+  assert.equal(redactSensitiveData(privKeySample), "[REDACTED_PRIVATE_KEY]");
+
+  // Normal safe content is preserved without alterations
+  const safeText = "Deployment preview verified on branch checkpoint/google-first-basic-access";
+  assert.equal(redactSensitiveData(safeText), safeText);
+});
+
+test("AI Center: safe file inspection enforces boundary, allowlist, and redacts content", async () => {
+  const tools = load("src/lib/ai-center/tools.ts", { "server-only": {} }, { process: { ...process, cwd: () => process.cwd(), env: process.env } });
+  const { isPathAllowlisted, safeInspectFile } = tools;
+
+  // Rejects path traversal and outside allowlist
+  assert.equal(isPathAllowlisted("src/../../etc/passwd"), false);
+  assert.equal(isPathAllowlisted("src/../.env.local"), false);
+  assert.equal(isPathAllowlisted(".env"), false);
+  assert.equal(isPathAllowlisted(".env.local"), false);
+  assert.equal(isPathAllowlisted(".git/config"), false);
+  assert.equal(isPathAllowlisted("node_modules/next/package.json"), false);
+  assert.equal(isPathAllowlisted("arbitrary-script.sh"), false);
+  assert.equal(isPathAllowlisted("src/malicious\0file.ts"), false);
+
+  // Allows designated safe files
+  assert.equal(isPathAllowlisted("package.json"), true);
+  assert.equal(isPathAllowlisted("README.md"), true);
+  assert.equal(isPathAllowlisted("src/lib/auth.ts"), true);
+
+  // Inspecting outside allowlist returns permission failure
+  const deniedResult = await safeInspectFile(".env.local");
+  assert.equal(deniedResult.success, false);
+  assert.match(deniedResult.message, /Akses ditolak/i);
+
+  // Inspecting valid file succeeds and content is returned
+  const validResult = await safeInspectFile("package.json");
+  assert.equal(validResult.success, true);
+  assert.ok(validResult.content && validResult.content.includes("sim-kb-devfanta-melati"));
+});
+
+test("AI Center: project memory persistence, task mutation, and change audit history", async () => {
+  const memory = load("src/lib/ai-center/memory.ts", { "server-only": {} }, { process: { ...process, cwd: () => process.cwd(), env: process.env } });
+
+  const initialContext = await memory.getProjectMemory("00000000-0000-0000-0000-000000000001");
+  assert.ok(initialContext.tasks.length >= 4);
+  assert.equal(initialContext.storageEngine.type, "server_persistent_file");
+  assert.equal(initialContext.storageEngine.isDatabaseBacked, false);
+  assert.match(initialContext.storageEngine.requirementRemaining, /ai_agent_memory/);
+
+  // Update task status and verify change audit record
+  const updateSuccess = await memory.updateTaskStatus("task-ai-center", "in_progress", "Audit dan pengujian keamanan AI Center aktif", "Super Admin Tester");
+  assert.equal(updateSuccess, true);
+
+  const updatedContext = await memory.getProjectMemory();
+  const targetTask = updatedContext.tasks.find((t) => t.id === "task-ai-center");
+  assert.ok(targetTask);
+  assert.equal(targetTask.status, "in_progress");
+
+  // Verify history entry was appended
+  assert.ok(updatedContext.history.length > 0);
+  const latestHistory = updatedContext.history[0];
+  assert.equal(latestHistory.action, "task_update");
+  assert.match(latestHistory.details, /task-ai-center/);
+
+  // Record a new session and verify session history
+  const session = await memory.recordNewSession("Validasi preflight deployment", ["173 tests passed", "lint clean"]);
+  assert.ok(session.id.startsWith("sess-"));
+  assert.equal(session.verifiedChecks.length, 2);
+});
+
+test("AI Center: deployment preflight guardrails and honest status reporting", () => {
+  const toolsModule = load("src/lib/ai-center/tools.ts", { "server-only": {} }, { process: { ...process, cwd: () => process.cwd(), env: process.env } });
+  const keyManagementModule = load("src/lib/ai-center/key-management.ts", {
+    "server-only": {},
+    "@/lib/ai-center/tools": toolsModule,
+  }, { process: { ...process, cwd: () => process.cwd(), env: process.env } });
+
+  const deployment = load("src/lib/ai-center/deployment.ts", { "server-only": {} });
+  const providers = load("src/lib/ai-center/providers.ts", {
+    "server-only": {},
+    "@/lib/ai-center/key-management": keyManagementModule,
+  }, { process: { ...process, cwd: () => process.cwd(), env: process.env } });
+
+  // Preflight without VERCEL_DEPLOY_HOOK_URL must block promotion
+  const readiness = deployment.checkPromotionReadiness();
+  assert.equal(readiness.canPromote, false);
+  assert.ok(readiness.blockingReasons.length > 0);
+  assert.match(readiness.blockingReasons[0], /Deploy Hook Vercel belum dikonfigurasi/);
+
+  // Integrations must not claim fake connection if hook is missing
+  const integrations = deployment.getDeploymentIntegrations();
+  const vercel = integrations.find((i) => i.id === "vercel");
+  assert.ok(vercel);
+  if (!process.env.VERCEL_DEPLOY_HOOK_URL && !process.env.VERCEL) {
+    assert.equal(vercel.statusText, "Belum Terhubung (Deploy Hook URL Belum Diisi)");
+  }
+
+  // Provider adapters must report not_connected when keys are absent
+  const connections = providers.getProviderConnections();
+  assert.equal(connections.length, 3);
+  for (const conn of connections) {
+    if (!process.env[conn.envKeyName]) {
+      assert.equal(typeof conn.configured, "boolean");
+      assert.equal(typeof conn.status, "string");
+      assert.ok(conn.statusLabel.length > 0);
+    }
+  }
+});
+
+test("AI Center: Google Drive OAuth structure and cloud sync persistence", async () => {
+  const toolsModule = load("src/lib/ai-center/tools.ts", { "server-only": {} }, { process: { ...process, cwd: () => process.cwd(), env: process.env } });
+  const keyManagementModule = load("src/lib/ai-center/key-management.ts", {
+    "server-only": {},
+    "@/lib/ai-center/tools": toolsModule,
+  }, { process: { ...process, cwd: () => process.cwd(), env: process.env } });
+  const memoryModule = load("src/lib/ai-center/memory.ts", { "server-only": {} }, { process: { ...process, cwd: () => process.cwd(), env: process.env } });
+
+  const drive = load("src/lib/ai-center/google-drive.ts", {
+    "server-only": {},
+    "@/lib/ai-center/key-management": keyManagementModule,
+    "@/lib/ai-center/memory": memoryModule,
+    "@/lib/ai-center/tools": toolsModule,
+  }, { process: { ...process, cwd: () => process.cwd(), env: process.env } });
+
+  // 1. Initial default email hint is alwisginting@gmail.com
+  assert.equal(drive.DRIVE_CONFIG.defaultAccountEmail, "alwisginting@gmail.com");
+
+  // 2. Folder hierarchy defines root 'DEVFANTA MELATI - AI Agent' and 5 subfolders
+  assert.equal(drive.DRIVE_CONFIG.rootFolderName, "DEVFANTA MELATI - AI Agent");
+  assert.deepEqual([...drive.DRIVE_CONFIG.subfolders], ["Memory", "Sessions", "Tasks", "Documents", "Backups"]);
+
+  // 3. State reports honest unconnected status if OAuth tokens are absent
+  const state = await drive.getGoogleDriveState();
+  assert.equal(state.accountEmail, "alwisginting@gmail.com");
+  assert.equal(typeof state.connected, "boolean");
+  if (!state.connected) {
+    assert.match(state.statusText, /Belum Terhubung/);
+    assert.match(state.syncMessage, /Google Drive belum aktif/);
+  }
+
+  // 4. Updating target account changes email cleanly
+  const updateRes = await drive.updateGoogleDriveAccount("alwisginting@gmail.com");
+  assert.equal(updateRes.success, true);
+});
+
+test("AI Center: API key AES-256 encryption, masking, and audit history", async () => {
+  const toolsModule = load("src/lib/ai-center/tools.ts", { "server-only": {} }, { process: { ...process, cwd: () => process.cwd(), env: process.env } });
+  const km = load("src/lib/ai-center/key-management.ts", {
+    "server-only": {},
+    "@/lib/ai-center/tools": toolsModule,
+  }, { process: { ...process, cwd: () => process.cwd(), env: process.env } });
+
+  // 1. Secret masking obscures plaintext
+  assert.equal(km.maskApiKey("AIzaSyD9xK12345678901234567890123456789"), "AIza••••6789");
+  assert.equal(km.maskApiKey("sk-proj-123456789012345678901234"), "sk-p••••1234");
+  assert.equal(km.maskApiKey("short"), "••••••••");
+
+  // 2. AES-256-GCM encryption & decryption round-trip
+  const originalSecret = "AIzaSyD9xK12345678901234567890123456789";
+  const encrypted = km.encryptSecret(originalSecret);
+  assert.notEqual(encrypted, originalSecret);
+  assert.ok(encrypted.includes(":")); // iv:tag:data
+  const decrypted = km.decryptSecret(encrypted);
+  assert.equal(decrypted, originalSecret);
+
+  // 3. Adding a managed key records audit history and masks secret in listing
+  const addRes = await km.addManagedApiKey({
+    providerType: "gemini",
+    label: "Gemini Key Automated Test",
+    ownerEmail: "alwisginting@gmail.com",
+    model: "gemini-2.5-flash",
+    secret: originalSecret,
+    actor: "Super Admin Tester",
+  });
+  assert.equal(addRes.success, true);
+  assert.ok(addRes.keyId);
+
+  // 4. Listing keys only returns masked secret, never plaintext
+  const keys = await km.getManagedApiKeys();
+  const foundKey = keys.find((k) => k.id === addRes.keyId);
+  assert.ok(foundKey);
+  assert.equal(foundKey.maskedSecret, "AIza••••6789");
+  assert.equal(foundKey.encryptedSecret, undefined);
+
+  // 5. Testing key format verifies provider specification
+  const testRes = await km.testApiKey(addRes.keyId);
+  assert.equal(testRes.success, true);
+  assert.match(testRes.message, /terverifikasi/i);
+
+  // 6. Toggling and deleting key appends to audit history
+  await km.toggleApiKeyStatus(addRes.keyId, false, "Super Admin Tester");
+  const keysAfterToggle = await km.getManagedApiKeys();
+  const toggledKey = keysAfterToggle.find((k) => k.id === addRes.keyId);
+  assert.equal(toggledKey.isActive, false);
+
+  const delRes = await km.deleteApiKey(addRes.keyId, "Super Admin Tester");
+  assert.equal(delRes.success, true);
+
+  const history = await km.getKeyHistory();
+  assert.ok(history.length >= 3);
+  const actions = history.map((h) => h.action);
+  assert.ok(actions.includes("added"));
+  assert.ok(actions.includes("tested"));
+  assert.ok(actions.includes("deleted"));
+});
+
+test("AI Center: Google Drive OAuth callback handler and server-side authorization enforcement", async () => {
+  let simulatedRole = "guru";
+  let simulatedStatus = "active";
+
+  const toolsModule = load("src/lib/ai-center/tools.ts", { "server-only": {} }, { process: { ...process, cwd: () => process.cwd(), env: process.env } });
+  const kmModule = load("src/lib/ai-center/key-management.ts", { "server-only": {}, "@/lib/ai-center/tools": toolsModule }, { process: { ...process, cwd: () => process.cwd(), env: process.env } });
+  const memoryModule = load("src/lib/ai-center/memory.ts", { "server-only": {} }, { process: { ...process, cwd: () => process.cwd(), env: process.env } });
+  const driveModule = load("src/lib/ai-center/google-drive.ts", {
+    "server-only": {},
+    "@/lib/ai-center/key-management": kmModule,
+    "@/lib/ai-center/memory": memoryModule,
+    "@/lib/ai-center/tools": toolsModule,
+  }, { process: { ...process, cwd: () => process.cwd(), env: process.env } });
+
+  const { GET } = load("src/app/api/auth/google-drive/callback/route.ts", {
+    "next/server": {
+      NextResponse: {
+        redirect(url) {
+          return {
+            status: 307,
+            headers: new Map([["location", typeof url === "string" ? url : url.toString()]]),
+          };
+        },
+      },
+    },
+    "@/lib/auth": {
+      requireCapability: async () => {
+        if (simulatedRole !== "super_admin" || simulatedStatus !== "active") {
+          throw new Error("forbidden");
+        }
+        return {
+          role: simulatedRole,
+          membership: { status: simulatedStatus, role: simulatedRole },
+          user: { id: "user-super-admin", email: "alwisginting@gmail.com" },
+        };
+      },
+    },
+    "@/lib/ai-center/google-drive": driveModule,
+  }, { process: { ...process, env: { ...process.env, GOOGLE_DRIVE_CLIENT_ID: "test-client-id", GOOGLE_DRIVE_CLIENT_SECRET: "test-secret" } } });
+
+  // 1. Non-super_admin or unauthorized access is rejected immediately
+  simulatedRole = "guru";
+  const unauthRes = await GET(new Request("https://school.example/api/auth/google-drive/callback?code=mock-code"));
+  assert.equal(unauthRes.headers.get("location"), "https://school.example/dashboard?error=forbidden");
+
+  // 2. Super admin with oauth error redirects with error parameter
+  simulatedRole = "super_admin";
+  const errorRes = await GET(new Request("https://school.example/api/auth/google-drive/callback?error=access_denied"));
+  assert.equal(errorRes.headers.get("location"), "https://school.example/dashboard/ai-center/drive?error=oauth_access_denied");
+
+  // 3. Super admin with missing code redirects with missing_code
+  const noCodeRes = await GET(new Request("https://school.example/api/auth/google-drive/callback"));
+  assert.equal(noCodeRes.headers.get("location"), "https://school.example/dashboard/ai-center/drive?error=missing_code");
+});

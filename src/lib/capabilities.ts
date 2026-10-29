@@ -24,6 +24,8 @@ export const capabilityRoles = {
   "activity.read": all,
   "audit.read": admins,
   "system.read": ["super_admin"],
+  "ai_center.read": ["super_admin"],
+  "ai_center.manage": ["super_admin"],
   "notifications.read": all,
 } as const satisfies Record<string, readonly AppRole[]>;
 export const basicCapabilities = ["dashboard.read", "profile.read", "profile.update_self", "school.read"] as const;
